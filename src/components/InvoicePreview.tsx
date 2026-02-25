@@ -26,14 +26,14 @@ export default function InvoicePreview({ invoice, client, totalHours, balanceDue
     const themeColor = client.themeColor || "#006b51";
     const paymentDueDate = computePaymentDueDate(
       invoice.issuedDate,
-      invoice.netTerms
+      client.netTerms
     );
     const periodStart = servicePeriodStart(invoice.serviceMonth);
     const periodEnd = servicePeriodEnd(invoice.serviceMonth);
 
     return (
       <div
-        className="bg-white flex flex-col justify-between w-[595px] min-h-[842px] py-[10px] px-[10px] font-sans text-dark"
+        className="bg-white flex flex-col justify-between w-[595px] min-h-[842px] pt-[10px] pb-[16px] px-[10px] font-sans text-dark"
         style={{ fontFamily: "'Inter', sans-serif" }}
       >
         {/* Top content */}
@@ -48,7 +48,7 @@ export default function InvoicePreview({ invoice, client, totalHours, balanceDue
               <h1 className="text-[32px] font-bold leading-8 capitalize text-dark">
                 Invoice
               </h1>
-              <div className="flex flex-col gap-1 items-end text-right">
+              <div className="flex flex-col gap-0 items-end text-right">
                 <span className="text-[10px] text-muted">Invoice Number</span>
                 <span className="text-[13px] font-bold text-dark">
                   {invoice.invoiceNumber || "INV-XXXXXX"}
@@ -84,19 +84,19 @@ export default function InvoicePreview({ invoice, client, totalHours, balanceDue
 
               {/* Dates */}
               <div className="flex flex-col gap-3 items-end text-[10px] text-right">
-                <div className="flex flex-col gap-1 items-end">
+                <div className="flex flex-col gap-0 items-end">
                   <span className="text-muted uppercase">Issued on</span>
                   <span className="font-semibold text-dark">
                     {formatDate(invoice.issuedDate)}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 items-end">
+                <div className="flex flex-col gap-0 items-end">
                   <span className="text-muted uppercase">Payment Due</span>
                   <span className="font-semibold text-dark">
                     {formatDate(paymentDueDate)}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 items-end">
+                <div className="flex flex-col gap-0 items-end">
                   <span className="text-muted uppercase">Service Period</span>
                   <span className="font-semibold text-dark">
                     {periodStart && periodEnd
@@ -152,7 +152,7 @@ export default function InvoicePreview({ invoice, client, totalHours, balanceDue
               <div className="flex items-center justify-between w-full">
                 <span className="text-[10px] text-muted">Hourly Rate</span>
                 <span className="text-[10px] text-muted">
-                  {formatCurrency(invoice.hourlyRate)}
+                  {formatCurrency(client.hourlyRate)}
                 </span>
               </div>
             </div>

@@ -4,6 +4,8 @@ export interface Client {
   address: string;
   logoDataUrl?: string;
   themeColor: string;
+  hourlyRate: number;
+  netTerms: NetTerms;
 }
 
 export interface LineItem {
@@ -19,10 +21,8 @@ export interface InvoiceData {
   clientId: string;
   invoiceNumber: string;
   issuedDate: string;
-  netTerms: NetTerms;
   serviceMonth: string; // "YYYY-MM" format
   lineItems: LineItem[];
-  hourlyRate: number;
 }
 
 export interface SavedInvoice {

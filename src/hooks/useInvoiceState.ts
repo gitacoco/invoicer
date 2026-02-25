@@ -6,7 +6,7 @@ function generateId(): string {
   return `item-${Date.now()}-${nextId++}`;
 }
 
-function getDefaultInvoice(clientId: string): InvoiceData {
+function getDefaultInvoice(clientId: string, serviceMonth?: string): InvoiceData {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -18,10 +18,8 @@ function getDefaultInvoice(clientId: string): InvoiceData {
     clientId,
     invoiceNumber: `INV-${year}${month}`,
     issuedDate: `${year}-${month}-${String(now.getDate()).padStart(2, "0")}`,
-    netTerms: 30,
-    serviceMonth: `${smYear}-${smMonth}`,
+    serviceMonth: serviceMonth ?? `${smYear}-${smMonth}`,
     lineItems: [{ id: generateId(), date: "", service: "", hours: 0 }],
-    hourlyRate: 150,
   };
 }
 
@@ -71,14 +69,9 @@ export function useInvoiceState(clientId: string) {
     [invoice.lineItems]
   );
 
-  const balanceDue = useMemo(
-    () => totalHours * invoice.hourlyRate,
-    [totalHours, invoice.hourlyRate]
-  );
-
   const resetInvoice = useCallback(
-    (newClientId?: string) => {
-      setInvoice(getDefaultInvoice(newClientId ?? clientId));
+    (newClientId?: string, serviceMonth?: string) => {
+      setInvoice(getDefaultInvoice(newClientId ?? clientId, serviceMonth));
     },
     [clientId]
   );
@@ -102,7 +95,6 @@ export function useInvoiceState(clientId: string) {
     removeLineItem,
     updateLineItem,
     totalHours,
-    balanceDue,
     resetInvoice,
     loadInvoice,
     mergeLineItems,

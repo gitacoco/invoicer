@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { Client } from "../types";
+import type { Client, NetTerms } from "../types";
 
 const DEFAULT_COLOR = "#006b51";
 
@@ -26,6 +26,8 @@ export function ClientModal({
   const [address, setAddress] = useState("");
   const [themeColor, setThemeColor] = useState(DEFAULT_COLOR);
   const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>();
+  const [hourlyRate, setHourlyRate] = useState(200);
+  const [netTerms, setNetTerms] = useState<NetTerms>(30);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const isEdit = !!editClient;
@@ -37,11 +39,15 @@ export function ClientModal({
       setAddress(editClient.address);
       setThemeColor(editClient.themeColor);
       setLogoDataUrl(editClient.logoDataUrl);
+      setHourlyRate(editClient.hourlyRate);
+      setNetTerms(editClient.netTerms);
     } else {
       setName("");
       setAddress("");
       setThemeColor(DEFAULT_COLOR);
       setLogoDataUrl(undefined);
+      setHourlyRate(200);
+      setNetTerms(30);
     }
   }, [editClient, open]);
 
@@ -63,6 +69,8 @@ export function ClientModal({
         address: address.trim(),
         themeColor,
         logoDataUrl,
+        hourlyRate,
+        netTerms,
       });
       onClose();
     } else {
@@ -71,11 +79,15 @@ export function ClientModal({
         address: address.trim(),
         themeColor,
         logoDataUrl,
+        hourlyRate,
+        netTerms,
       });
       setName("");
       setAddress("");
       setThemeColor(DEFAULT_COLOR);
       setLogoDataUrl(undefined);
+      setHourlyRate(200);
+      setNetTerms(30);
       onCreated(client);
       onClose();
     }
@@ -173,6 +185,33 @@ export function ClientModal({
             />
           </div>
         </label>
+
+        {/* Hourly rate + Payment terms */}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Hourly Rate ($)</span>
+            <input
+              type="number"
+              min="0"
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30"
+              value={hourlyRate || ""}
+              onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Payment Terms</span>
+            <select
+              className="appearance-none border border-gray-200 rounded-lg px-3 pr-8 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30 bg-white bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M4.5%206l3.5%203.5L11.5%206%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%221.5%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:16px_16px] bg-[right_8px_center] bg-no-repeat"
+              value={netTerms}
+              onChange={(e) => setNetTerms(Number(e.target.value) as NetTerms)}
+            >
+              <option value={15}>Net 15</option>
+              <option value={30}>Net 30</option>
+              <option value={45}>Net 45</option>
+              <option value={60}>Net 60</option>
+            </select>
+          </label>
+        </div>
 
         <div className="flex gap-2 mt-2">
           <button

@@ -58,7 +58,9 @@ const s = StyleSheet.create({
   page: {
     fontFamily: "Inter",
     color: COLORS.dark,
-    padding: 10,
+    paddingTop: 10,
+    paddingBottom: 16,
+    paddingHorizontal: 10,
     flexDirection: "column",
     justifyContent: "space-between",
   },
@@ -77,7 +79,7 @@ const s = StyleSheet.create({
     marginBottom: 20,
   },
   invoiceTitle: { fontSize: 32, fontWeight: 700 },
-  invoiceNumLabel: { fontSize: 10, color: COLORS.muted, marginBottom: 4 },
+  invoiceNumLabel: { fontSize: 10, color: COLORS.muted, marginBottom: 0 },
   invoiceNumValue: { fontSize: 13, fontWeight: 700 },
   billingRow: {
     flexDirection: "row",
@@ -113,7 +115,7 @@ const s = StyleSheet.create({
     fontSize: 10,
     color: COLORS.muted,
     textTransform: "uppercase",
-    marginBottom: 2,
+    marginBottom: 0,
   },
   dateValue: { fontSize: 10, fontWeight: 600 },
 
@@ -224,7 +226,7 @@ export default function InvoicePDF({
   const lightBg = hexToLightBg(themeColor);
   const paymentDueDate = computePaymentDueDate(
     invoice.issuedDate,
-    invoice.netTerms
+    client.netTerms
   );
   const periodStart = servicePeriodStart(invoice.serviceMonth);
   const periodEnd = servicePeriodEnd(invoice.serviceMonth);
@@ -329,7 +331,7 @@ export default function InvoicePDF({
               <View style={s.summaryRow}>
                 <Text style={s.summaryLabel}>Hourly Rate</Text>
                 <Text style={s.summaryValue}>
-                  {formatCurrency(invoice.hourlyRate)}
+                  {formatCurrency(client.hourlyRate)}
                 </Text>
               </View>
             </View>

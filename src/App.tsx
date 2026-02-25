@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { ClientModal } from "./components/ClientSelector";
 import InvoiceForm from "./components/InvoiceForm";
 import InvoicePreview from "./components/InvoicePreview";
@@ -31,11 +31,16 @@ export default function App() {
     removeLineItem,
     updateLineItem,
     totalHours,
-    balanceDue,
     resetInvoice,
     loadInvoice,
     mergeLineItems,
   } = useInvoiceState(selectedClient?.id ?? "");
+
+  const hourlyRate = selectedClient?.hourlyRate ?? 0;
+  const balanceDue = useMemo(
+    () => totalHours * hourlyRate,
+    [totalHours, hourlyRate]
+  );
 
   const { savedInvoices, saveInvoice, deleteInvoice } = useLocalStorage();
 
@@ -91,6 +96,13 @@ export default function App() {
     [resetInvoice]
   );
 
+  const handleMonthSelect = useCallback(
+    (month: string) => {
+      resetInvoice(undefined, month);
+    },
+    [resetInvoice]
+  );
+
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     dragging.current = true;
@@ -132,13 +144,16 @@ export default function App() {
             setEditingClient(client);
             setModalOpen(true);
           }}
+          onMonthSelect={handleMonthSelect}
           savedInvoices={savedInvoices}
           onLoad={loadInvoice}
           onDelete={deleteInvoice}
+          togglConfigEnabled={toggl.config.enabled}
           togglEnabled={toggl.config.enabled && toggl.tokenValid === true}
           togglFetching={toggl.fetching}
           togglHasFetched={toggl.hasFetched}
           togglPending={toggl.pendingEntries}
+          onTogglToggle={() => toggl.updateConfig({ enabled: !toggl.config.enabled })}
           onTogglSync={handleTogglSync}
           onTogglImport={handleTogglImport}
           onOpenTogglSettings={() => setTogglModalOpen(true)}
@@ -152,10 +167,9 @@ export default function App() {
       />
 
       {/* Right: Preview + actions */}
-      <div className="flex-1 overflow-auto p-8 flex flex-col items-center">
-        {selectedClient ? (
-          <>
-            {/* Preview */}
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        <div className="flex-1 overflow-auto p-8 flex flex-col items-center">
+          {selectedClient ? (
             <div className="shadow-lg rounded-lg overflow-hidden">
               <InvoicePreview
                 invoice={invoice}
@@ -164,32 +178,28 @@ export default function App() {
                 balanceDue={balanceDue}
               />
             </div>
-            {/* Actions */}
-            <div className="flex gap-2 mt-4 w-[595px]">
-              <button
-                className="flex-1 bg-brand text-white font-semibold rounded-lg px-4 py-2.5 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50"
-                onClick={handleExportPdf}
-                disabled={exporting}
-              >
-                {exporting ? "Exporting..." : "Export PDF"}
-              </button>
-              <button
-                className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-dark hover:bg-white transition-colors"
-                onClick={handleSave}
-              >
-                Save
-              </button>
-              <button
-                className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-500 hover:bg-white transition-colors"
-                onClick={() => resetInvoice()}
-              >
-                New Invoice
-              </button>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+              Select or create a client to preview the invoice
             </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            Select or create a client to preview the invoice
+          )}
+        </div>
+        {/* Sticky bottom action bar */}
+        {selectedClient && (
+          <div className="shrink-0 bg-white border-t border-gray-200 px-8 py-3 flex gap-2 justify-center">
+            <button
+              className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-dark hover:bg-gray-50 transition-colors"
+              onClick={handleSave}
+            >
+              Save
+            </button>
+            <button
+              className="flex-1 max-w-[400px] bg-brand text-white font-semibold rounded-lg px-4 py-2.5 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50"
+              onClick={handleExportPdf}
+              disabled={exporting}
+            >
+              {exporting ? "Exporting..." : "Export PDF"}
+            </button>
           </div>
         )}
       </div>

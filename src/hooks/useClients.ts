@@ -9,6 +9,8 @@ const DEFAULT_CLIENTS: Client[] = [
     name: "Acme Consulting",
     address: "500 Market Street\nSuite 100\nSan Francisco, CA 94105",
     themeColor: "#006b51",
+    hourlyRate: 150,
+    netTerms: 30,
   },
 ];
 
