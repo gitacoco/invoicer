@@ -1,25 +1,48 @@
-import { forwardRef } from "react";
-import type { InvoiceData } from "../types";
-import { formatCurrency, formatDate, formatHours } from "../utils/format";
+import type { InvoiceData, Client } from "../types";
+import {
+  formatCurrency,
+  formatDate,
+  formatHours,
+  computePaymentDueDate,
+  servicePeriodStart,
+  servicePeriodEnd,
+} from "../utils/format";
 
 interface Props {
   invoice: InvoiceData;
+  client: Client;
   totalHours: number;
   balanceDue: number;
 }
 
-const InvoicePreview = forwardRef<HTMLDivElement, Props>(
-  ({ invoice, totalHours, balanceDue }, ref) => {
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+export default function InvoicePreview({ invoice, client, totalHours, balanceDue }: Props) {
+    const themeColor = client.themeColor || "#006b51";
+    const paymentDueDate = computePaymentDueDate(
+      invoice.issuedDate,
+      invoice.netTerms
+    );
+    const periodStart = servicePeriodStart(invoice.serviceMonth);
+    const periodEnd = servicePeriodEnd(invoice.serviceMonth);
+
     return (
       <div
-        ref={ref}
         className="bg-white flex flex-col justify-between w-[595px] min-h-[842px] py-[10px] px-[10px] font-sans text-dark"
         style={{ fontFamily: "'Inter', sans-serif" }}
       >
         {/* Top content */}
         <div className="flex flex-col gap-2 w-full">
           {/* Header */}
-          <div className="bg-brand-light rounded-[12px] px-5 py-4 flex flex-col gap-5">
+          <div
+            className="rounded-[12px] px-5 py-4 flex flex-col gap-5"
+            style={{ backgroundColor: hexToRgba(themeColor, 0.1) }}
+          >
             {/* Title row */}
             <div className="flex items-start justify-between">
               <h1 className="text-[32px] font-bold leading-8 capitalize text-dark">
@@ -41,11 +64,20 @@ const InvoicePreview = forwardRef<HTMLDivElement, Props>(
                   Bill To
                 </span>
                 <div className="flex flex-col gap-2">
-                  <span className="text-[14px] font-semibold text-dark">
-                    {invoice.clientName || "Client Name"}
-                  </span>
+                  <div className="flex gap-1 items-center">
+                    {client.logoDataUrl && (
+                      <img
+                        src={client.logoDataUrl}
+                        alt=""
+                        className="w-4 h-4 rounded-[2px] object-cover"
+                      />
+                    )}
+                    <span className="text-[14px] font-semibold text-dark">
+                      {client.name || "Client Name"}
+                    </span>
+                  </div>
                   <div className="text-[10px] text-dark whitespace-pre-line">
-                    {invoice.clientAddress || "Client Address"}
+                    {client.address || "Client Address"}
                   </div>
                 </div>
               </div>
@@ -61,14 +93,14 @@ const InvoicePreview = forwardRef<HTMLDivElement, Props>(
                 <div className="flex flex-col gap-1 items-end">
                   <span className="text-muted uppercase">Payment Due</span>
                   <span className="font-semibold text-dark">
-                    {formatDate(invoice.paymentDueDate)}
+                    {formatDate(paymentDueDate)}
                   </span>
                 </div>
                 <div className="flex flex-col gap-1 items-end">
                   <span className="text-muted uppercase">Service Period</span>
                   <span className="font-semibold text-dark">
-                    {invoice.servicePeriodStart && invoice.servicePeriodEnd
-                      ? `${invoice.servicePeriodStart} to ${invoice.servicePeriodEnd}`
+                    {periodStart && periodEnd
+                      ? `${periodStart} to ${periodEnd}`
                       : "—"}
                   </span>
                 </div>
@@ -125,7 +157,10 @@ const InvoicePreview = forwardRef<HTMLDivElement, Props>(
               </div>
             </div>
             {/* Balance due */}
-            <div className="bg-brand rounded-[8px] px-5 py-3 w-[282px]">
+            <div
+              className="rounded-[8px] px-5 py-3 w-[282px]"
+              style={{ backgroundColor: themeColor }}
+            >
               <div className="flex items-center justify-between w-full">
                 <span className="text-[12px] font-semibold text-white">
                   Balance Due
@@ -197,9 +232,4 @@ const InvoicePreview = forwardRef<HTMLDivElement, Props>(
         </div>
       </div>
     );
-  }
-);
-
-InvoicePreview.displayName = "InvoicePreview";
-
-export default InvoicePreview;
+}

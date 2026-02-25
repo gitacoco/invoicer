@@ -1,7 +1,12 @@
-import type { InvoiceData, LineItem, SavedInvoice } from "../types";
+import type { InvoiceData, LineItem, SavedInvoice, Client, NetTerms } from "../types";
+import { ClientPicker } from "./ClientSelector";
+import { TogglSyncPrompt } from "./TogglIntegration";
+import type { AggregatedEntry } from "../hooks/useToggl";
 
 interface Props {
   invoice: InvoiceData;
+  client: Client | null;
+  clients: Client[];
   updateField: <K extends keyof InvoiceData>(
     field: K,
     value: InvoiceData[K]
@@ -13,13 +18,20 @@ interface Props {
     field: keyof LineItem,
     value: string | number
   ) => void;
-  onSave: () => void;
-  onExportPdf: () => void;
-  onReset: () => void;
+  onSelectClient: (client: Client) => void;
+  onOpenCreateClient: () => void;
+  onOpenEditClient: (client: Client) => void;
   savedInvoices: SavedInvoice[];
   onLoad: (data: InvoiceData) => void;
   onDelete: (key: string) => void;
-  exporting: boolean;
+  // Toggl integration
+  togglEnabled: boolean;
+  togglFetching: boolean;
+  togglHasFetched: boolean;
+  togglPending: AggregatedEntry[];
+  onTogglSync: () => void;
+  onTogglImport: () => void;
+  onOpenTogglSettings: () => void;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -47,21 +59,46 @@ function Input({
 
 export default function InvoiceForm({
   invoice,
+  client,
+  clients,
   updateField,
   addLineItem,
   removeLineItem,
   updateLineItem,
-  onSave,
-  onExportPdf,
-  onReset,
+  onSelectClient,
+  onOpenCreateClient,
+  onOpenEditClient,
   savedInvoices,
   onLoad,
   onDelete,
-  exporting,
+  togglEnabled,
+  togglFetching,
+  togglHasFetched,
+  togglPending,
+  onTogglSync,
+  onTogglImport,
+  onOpenTogglSettings,
 }: Props) {
   return (
     <div className="flex flex-col gap-6 p-6 h-full overflow-y-auto">
-      <h2 className="text-lg font-bold text-dark">Invoice Builder</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-dark">Invoice Builder</h2>
+        <button
+          className="text-[11px] text-gray-400 hover:text-brand transition-colors"
+          onClick={onOpenTogglSettings}
+        >
+          Integration
+        </button>
+      </div>
+
+      {/* Client picker */}
+      <ClientPicker
+        clients={clients}
+        selectedClient={client}
+        onSelect={onSelectClient}
+        onOpenCreate={onOpenCreateClient}
+        onOpenEdit={onOpenEditClient}
+      />
 
       {/* Saved invoices */}
       {savedInvoices.length > 0 && (
@@ -91,27 +128,6 @@ export default function InvoiceForm({
         </div>
       )}
 
-      {/* Client info */}
-      <div className="flex flex-col gap-3">
-        <SectionLabel>Client Information</SectionLabel>
-        <Input
-          label="Client Name"
-          value={invoice.clientName}
-          onChange={(e) => updateField("clientName", e.target.value)}
-          placeholder="e.g. Acme Consulting"
-        />
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-gray-500">Client Address</span>
-          <textarea
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30 transition-colors resize-none"
-            rows={3}
-            value={invoice.clientAddress}
-            onChange={(e) => updateField("clientAddress", e.target.value)}
-            placeholder={"1302 El Camino Real\nSuite 100\nSan Francisco, CA 94105"}
-          />
-        </label>
-      </div>
-
       {/* Invoice meta */}
       <div className="flex flex-col gap-3">
         <SectionLabel>Invoice Details</SectionLabel>
@@ -128,27 +144,28 @@ export default function InvoiceForm({
             value={invoice.issuedDate}
             onChange={(e) => updateField("issuedDate", e.target.value)}
           />
-          <Input
-            label="Payment Due"
-            type="date"
-            value={invoice.paymentDueDate}
-            onChange={(e) => updateField("paymentDueDate", e.target.value)}
-          />
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Payment Terms</span>
+            <select
+              className="appearance-none border border-gray-200 rounded-lg px-3 pr-8 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30 transition-colors bg-white bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M4.5%206l3.5%203.5L11.5%206%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%221.5%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:16px_16px] bg-[right_8px_center] bg-no-repeat"
+              value={invoice.netTerms}
+              onChange={(e) =>
+                updateField("netTerms", Number(e.target.value) as NetTerms)
+              }
+            >
+              <option value={15}>Net 15</option>
+              <option value={30}>Net 30</option>
+              <option value={45}>Net 45</option>
+              <option value={60}>Net 60</option>
+            </select>
+          </label>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Service Period Start"
-            type="date"
-            value={invoice.servicePeriodStart}
-            onChange={(e) => updateField("servicePeriodStart", e.target.value)}
-          />
-          <Input
-            label="Service Period End"
-            type="date"
-            value={invoice.servicePeriodEnd}
-            onChange={(e) => updateField("servicePeriodEnd", e.target.value)}
-          />
-        </div>
+        <Input
+          label="Service Month"
+          type="month"
+          value={invoice.serviceMonth}
+          onChange={(e) => updateField("serviceMonth", e.target.value)}
+        />
       </div>
 
       {/* Line items */}
@@ -213,6 +230,16 @@ export default function InvoiceForm({
         >
           + Add Line Item
         </button>
+
+        {/* Toggl sync prompt */}
+        <TogglSyncPrompt
+          enabled={togglEnabled}
+          fetching={togglFetching}
+          hasFetched={togglHasFetched}
+          pendingEntries={togglPending}
+          onSync={onTogglSync}
+          onImport={onTogglImport}
+        />
       </div>
 
       {/* Hourly Rate */}
@@ -229,30 +256,6 @@ export default function InvoiceForm({
         />
       </div>
 
-      {/* Actions */}
-      <div className="flex flex-col gap-2 mt-2 sticky bottom-0 bg-white pt-3 pb-1 border-t border-gray-100">
-        <button
-          className="bg-brand text-white font-semibold rounded-lg px-4 py-2.5 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50"
-          onClick={onExportPdf}
-          disabled={exporting}
-        >
-          {exporting ? "Exporting..." : "Export PDF"}
-        </button>
-        <div className="flex gap-2">
-          <button
-            className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm text-dark hover:bg-gray-50 transition-colors"
-            onClick={onSave}
-          >
-            Save
-          </button>
-          <button
-            className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
-            onClick={onReset}
-          >
-            New Invoice
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -6,28 +6,28 @@ function generateId(): string {
   return `item-${Date.now()}-${nextId++}`;
 }
 
-function getDefaultInvoice(): InvoiceData {
+function getDefaultInvoice(clientId: string): InvoiceData {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
+  // Default service month is last month
+  const lastMonth = new Date(year, now.getMonth() - 1, 1);
+  const smYear = lastMonth.getFullYear();
+  const smMonth = String(lastMonth.getMonth() + 1).padStart(2, "0");
   return {
-    clientName: "",
-    clientAddress: "",
+    clientId,
     invoiceNumber: `INV-${year}${month}`,
-    issuedDate: now.toISOString().split("T")[0],
-    paymentDueDate: new Date(now.getTime() + 30 * 86400000)
-      .toISOString()
-      .split("T")[0],
-    servicePeriodStart: "",
-    servicePeriodEnd: "",
+    issuedDate: `${year}-${month}-${String(now.getDate()).padStart(2, "0")}`,
+    netTerms: 30,
+    serviceMonth: `${smYear}-${smMonth}`,
     lineItems: [{ id: generateId(), date: "", service: "", hours: 0 }],
     hourlyRate: 150,
   };
 }
 
-export function useInvoiceState(initial?: InvoiceData) {
-  const [invoice, setInvoice] = useState<InvoiceData>(
-    initial ?? getDefaultInvoice
+export function useInvoiceState(clientId: string) {
+  const [invoice, setInvoice] = useState<InvoiceData>(() =>
+    getDefaultInvoice(clientId)
   );
 
   const updateField = useCallback(
@@ -76,12 +76,23 @@ export function useInvoiceState(initial?: InvoiceData) {
     [totalHours, invoice.hourlyRate]
   );
 
-  const resetInvoice = useCallback(() => {
-    setInvoice(getDefaultInvoice());
-  }, []);
+  const resetInvoice = useCallback(
+    (newClientId?: string) => {
+      setInvoice(getDefaultInvoice(newClientId ?? clientId));
+    },
+    [clientId]
+  );
 
   const loadInvoice = useCallback((data: InvoiceData) => {
     setInvoice(data);
+  }, []);
+
+  /** Append new line items (used by Toggl sync) */
+  const mergeLineItems = useCallback((newItems: LineItem[]) => {
+    setInvoice((prev) => ({
+      ...prev,
+      lineItems: [...prev.lineItems, ...newItems],
+    }));
   }, []);
 
   return {
@@ -94,5 +105,6 @@ export function useInvoiceState(initial?: InvoiceData) {
     balanceDue,
     resetInvoice,
     loadInvoice,
+    mergeLineItems,
   };
 }

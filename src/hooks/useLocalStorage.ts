@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { InvoiceData, SavedInvoice } from "../types";
+import type { InvoiceData, SavedInvoice, Client } from "../types";
 
 const STORAGE_KEY = "invoicer-saved";
 
@@ -19,9 +19,9 @@ function saveAll(invoices: SavedInvoice[]) {
 export function useLocalStorage() {
   const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>(loadAll);
 
-  const saveInvoice = useCallback((data: InvoiceData) => {
+  const saveInvoice = useCallback((data: InvoiceData, client: Client) => {
     const key = data.invoiceNumber || `draft-${Date.now()}`;
-    const label = `${data.invoiceNumber} - ${data.clientName || "Untitled"}`;
+    const label = `${data.invoiceNumber} - ${client.name || "Untitled"}`;
     const entry: SavedInvoice = {
       key,
       label,

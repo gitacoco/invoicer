@@ -20,3 +20,28 @@ export function formatDate(dateStr: string): string {
 export function formatHours(hours: number): string {
   return hours.toFixed(2);
 }
+
+/** Compute payment due date: issuedDate + netTerms days. Returns "YYYY-MM-DD". */
+export function computePaymentDueDate(
+  issuedDate: string,
+  netTerms: number
+): string {
+  if (!issuedDate) return "";
+  const d = new Date(issuedDate + "T00:00:00");
+  d.setDate(d.getDate() + netTerms);
+  return d.toISOString().split("T")[0];
+}
+
+/** Given "YYYY-MM", return the first day "YYYY-MM-01". */
+export function servicePeriodStart(serviceMonth: string): string {
+  if (!serviceMonth) return "";
+  return `${serviceMonth}-01`;
+}
+
+/** Given "YYYY-MM", return the last day of that month "YYYY-MM-DD". */
+export function servicePeriodEnd(serviceMonth: string): string {
+  if (!serviceMonth) return "";
+  const [year, month] = serviceMonth.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${serviceMonth}-${String(lastDay).padStart(2, "0")}`;
+}
