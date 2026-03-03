@@ -38,10 +38,17 @@ export function servicePeriodStart(serviceMonth: string): string {
   return `${serviceMonth}-01`;
 }
 
-/** Given "YYYY-MM", return the last day of that month "YYYY-MM-DD". */
-export function servicePeriodEnd(serviceMonth: string): string {
-  if (!serviceMonth) return "";
-  const [year, month] = serviceMonth.split("-").map(Number);
+/**
+ * Given start month "YYYY-MM" and optional end month "YYYY-MM",
+ * return the last day of the end month as "YYYY-MM-DD".
+ */
+export function servicePeriodEnd(
+  serviceMonth: string,
+  serviceMonthEnd?: string
+): string {
+  const targetMonth = serviceMonthEnd || serviceMonth;
+  if (!targetMonth) return "";
+  const [year, month] = targetMonth.split("-").map(Number);
   const lastDay = new Date(year, month, 0).getDate();
-  return `${serviceMonth}-${String(lastDay).padStart(2, "0")}`;
+  return `${targetMonth}-${String(lastDay).padStart(2, "0")}`;
 }

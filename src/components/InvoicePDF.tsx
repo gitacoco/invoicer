@@ -229,7 +229,10 @@ export default function InvoicePDF({
     client.netTerms
   );
   const periodStart = servicePeriodStart(invoice.serviceMonth);
-  const periodEnd = servicePeriodEnd(invoice.serviceMonth);
+  const periodEnd = servicePeriodEnd(
+    invoice.serviceMonth,
+    invoice.serviceMonthEnd
+  );
 
   const visibleItems = invoice.lineItems.filter(
     (item) => item.date || item.service || item.hours

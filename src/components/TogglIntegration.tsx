@@ -71,12 +71,6 @@ export function TogglSettingsModal({
               {validating ? "Verifying..." : "Connect"}
             </button>
           </div>
-          {tokenValid === true && (
-            <span className="text-[11px] text-green-600">Connected successfully</span>
-          )}
-          {tokenValid === false && (
-            <span className="text-[11px] text-red-500">Invalid token. Check and try again.</span>
-          )}
         </div>
 
         {/* Client mapping */}
@@ -136,6 +130,7 @@ interface SyncProps {
   fetching: boolean;
   hasFetched: boolean;
   pendingEntries: AggregatedEntry[];
+  error?: string | null;
   onSync: () => void;
   onImport: () => void;
 }
@@ -145,6 +140,7 @@ export function TogglSyncPrompt({
   fetching,
   hasFetched,
   pendingEntries,
+  error,
   onSync,
   onImport,
 }: SyncProps) {
@@ -160,12 +156,15 @@ export function TogglSyncPrompt({
 
   if (!hasFetched) {
     return (
-      <button
-        className="text-[11px] text-purple-600 hover:text-purple-800 transition-colors text-left px-1"
-        onClick={onSync}
-      >
-        Sync from Toggl Track
-      </button>
+      <div className="flex flex-col gap-1 px-1">
+        <button
+          className="text-[11px] text-purple-600 hover:text-purple-800 transition-colors text-left"
+          onClick={onSync}
+        >
+          Sync from Toggl Track
+        </button>
+        {error && <span className="text-[10px] text-red-500">{error}</span>}
+      </div>
     );
   }
 
@@ -197,14 +196,17 @@ export function TogglSyncPrompt({
   }
 
   return (
-    <div className="flex items-center justify-between px-1">
-      <span className="text-[11px] text-gray-400">Up to date</span>
-      <button
-        className="text-[10px] text-purple-600 hover:text-purple-800 transition-colors"
-        onClick={onSync}
-      >
-        Sync again
-      </button>
+    <div className="flex flex-col gap-1 px-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-gray-400">Up to date</span>
+        <button
+          className="text-[10px] text-purple-600 hover:text-purple-800 transition-colors"
+          onClick={onSync}
+        >
+          Sync again
+        </button>
+      </div>
+      {error && <span className="text-[10px] text-red-500">{error}</span>}
     </div>
   );
 }

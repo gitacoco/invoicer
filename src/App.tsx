@@ -47,19 +47,49 @@ export default function App() {
   const toggl = useToggl();
 
   const handleTogglSync = useCallback(() => {
-    if (!selectedClient || !invoice.serviceMonth) return;
-    const togglClientId = toggl.config.clientMap[selectedClient.id];
-    const existingDates = new Set(
-      invoice.lineItems.map((li) => li.date).filter(Boolean)
+    if (!invoice.serviceMonth) return;
+    const togglClientId = selectedClient
+      ? toggl.config.clientMap[selectedClient.id]
+      : undefined;
+    toggl.fetchEntries(
+      invoice.serviceMonth,
+      invoice.serviceMonthEnd,
+      togglClientId
     );
-    toggl.fetchEntries(invoice.serviceMonth, togglClientId, existingDates);
-  }, [selectedClient, invoice.serviceMonth, invoice.lineItems, toggl]);
+  }, [selectedClient, invoice.serviceMonth, invoice.serviceMonthEnd, toggl]);
 
-  const handleTogglImport = useCallback(() => {
-    const items = toggl.toLineItems(toggl.pendingEntries);
-    mergeLineItems(items);
-    toggl.clearPending();
-  }, [toggl, mergeLineItems]);
+  const importedTogglKeys = useMemo(
+    () => {
+      const keys = new Set<string>();
+      for (const li of invoice.lineItems) {
+        if (!li.togglKey) continue;
+        keys.add(li.togglKey);
+        // Backward compatibility: old imports used entry-id keys.
+        // Current toggl entries are grouped by day and keyed by YYYY-MM-DD.
+        if (li.date) keys.add(li.date);
+      }
+      return keys;
+    },
+    [invoice.lineItems]
+  );
+
+  const handleTogglImportEntry = useCallback(
+    (entryKey: string) => {
+      if (importedTogglKeys.has(entryKey)) return;
+      const entry = toggl.pendingEntries.find((e) => e.key === entryKey);
+      if (!entry) return;
+      mergeLineItems(toggl.toLineItems([entry]));
+    },
+    [toggl, mergeLineItems, importedTogglKeys]
+  );
+
+  const handleTogglImportAll = useCallback(() => {
+    const unimported = toggl.pendingEntries.filter(
+      (entry) => !importedTogglKeys.has(entry.key)
+    );
+    if (unimported.length === 0) return;
+    mergeLineItems(toggl.toLineItems(unimported));
+  }, [toggl, importedTogglKeys, mergeLineItems]);
 
   const handleExportPdf = useCallback(async () => {
     if (!selectedClient) return;
@@ -80,6 +110,14 @@ export default function App() {
     saveInvoice(invoice, selectedClient);
   }, [invoice, selectedClient, saveInvoice]);
 
+  const handleClearAllEntries = useCallback(() => {
+    const confirmed = window.confirm(
+      "Clear all invoice entries? This will remove imported and manual items."
+    );
+    if (!confirmed) return;
+    updateField("lineItems", []);
+  }, [updateField]);
+
   const handleSelectClient = useCallback(
     (client: Client) => {
       setSelectedClient(client);
@@ -97,8 +135,8 @@ export default function App() {
   );
 
   const handleMonthSelect = useCallback(
-    (month: string) => {
-      resetInvoice(undefined, month);
+    (startMonth: string, endMonth?: string) => {
+      resetInvoice(undefined, startMonth, endMonth);
     },
     [resetInvoice]
   );
@@ -132,9 +170,6 @@ export default function App() {
           client={selectedClient}
           clients={clients}
           updateField={updateField}
-          addLineItem={addLineItem}
-          removeLineItem={removeLineItem}
-          updateLineItem={updateLineItem}
           onSelectClient={handleSelectClient}
           onOpenCreateClient={() => {
             setEditingClient(null);
@@ -153,9 +188,14 @@ export default function App() {
           togglFetching={toggl.fetching}
           togglHasFetched={toggl.hasFetched}
           togglPending={toggl.pendingEntries}
+          togglError={toggl.syncError}
+          togglTokenValid={toggl.tokenValid}
+          togglValidating={toggl.validating}
+          importedTogglKeys={importedTogglKeys}
           onTogglToggle={() => toggl.updateConfig({ enabled: !toggl.config.enabled })}
           onTogglSync={handleTogglSync}
-          onTogglImport={handleTogglImport}
+          onTogglImportEntry={handleTogglImportEntry}
+          onTogglImportAll={handleTogglImportAll}
           onOpenTogglSettings={() => setTogglModalOpen(true)}
         />
       </div>
@@ -176,6 +216,10 @@ export default function App() {
                 client={selectedClient}
                 totalHours={totalHours}
                 balanceDue={balanceDue}
+                updateField={updateField}
+                addLineItem={addLineItem}
+                removeLineItem={removeLineItem}
+                updateLineItem={updateLineItem}
               />
             </div>
           ) : (
@@ -184,22 +228,30 @@ export default function App() {
             </div>
           )}
         </div>
-        {/* Sticky bottom action bar */}
+        {/* Floating bottom action toolbar */}
         {selectedClient && (
-          <div className="shrink-0 bg-white border-t border-gray-200 px-8 py-3 flex gap-2 justify-center">
-            <button
-              className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-dark hover:bg-gray-50 transition-colors"
-              onClick={handleSave}
-            >
-              Save
-            </button>
-            <button
-              className="flex-1 max-w-[400px] bg-brand text-white font-semibold rounded-lg px-4 py-2.5 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50"
-              onClick={handleExportPdf}
-              disabled={exporting}
-            >
-              {exporting ? "Exporting..." : "Export PDF"}
-            </button>
+          <div className="absolute inset-x-0 bottom-4 z-20 flex justify-center pointer-events-none px-6">
+            <div className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 shadow-lg rounded-xl px-3 py-2 flex items-center gap-2">
+              <button
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-dark hover:bg-gray-50 transition-colors"
+                onClick={handleSave}
+              >
+                Save
+              </button>
+              <button
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-red-600 transition-colors"
+                onClick={handleClearAllEntries}
+              >
+                Clear all entries
+              </button>
+              <button
+                className="bg-brand text-white font-semibold rounded-lg px-4 py-2 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50 min-w-[140px]"
+                onClick={handleExportPdf}
+                disabled={exporting}
+              >
+                {exporting ? "Exporting..." : "Export PDF"}
+              </button>
+            </div>
           </div>
         )}
       </div>

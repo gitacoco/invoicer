@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { TogglConfig, TogglClient, TogglTimeEntry, LineItem } from "../types";
 
 const STORAGE_KEY = "invoicer-toggl";
@@ -28,25 +28,21 @@ function authHeaders(token: string): HeadersInit {
 }
 
 export interface AggregatedEntry {
+  key: string;
   date: string; // YYYY-MM-DD
   hours: number;
   descriptions: string[];
 }
 
-/** Group Toggl entries by date, sum durations, collect descriptions. */
-function aggregateByDate(
-  entries: TogglTimeEntry[],
-  existingDates: Set<string>
-): AggregatedEntry[] {
+/** Group raw Toggl entries by day into one importable row per date. */
+function aggregateByDate(entries: TogglTimeEntry[]): AggregatedEntry[] {
   const map = new Map<string, { seconds: number; descs: string[] }>();
 
   for (const e of entries) {
-    // Skip running timers (negative duration)
-    if (e.duration < 0) continue;
-    const date = e.start.slice(0, 10); // "YYYY-MM-DD"
-    if (existingDates.has(date)) continue;
-
+    if (e.duration < 0) continue; // skip running timers
+    const date = e.start.slice(0, 10);
     const existing = map.get(date);
+
     if (existing) {
       existing.seconds += e.duration;
       if (e.description) existing.descs.push(e.description);
@@ -61,9 +57,10 @@ function aggregateByDate(
   return Array.from(map.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, { seconds, descs }]) => ({
+      key: date,
       date,
       hours: Math.round((seconds / 3600) * 100) / 100,
-      descriptions: [...new Set(descs)], // deduplicate identical descriptions
+      descriptions: [...new Set(descs)],
     }));
 }
 
@@ -81,6 +78,7 @@ export function useToggl() {
   const [fetching, setFetching] = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
   const [pendingEntries, setPendingEntries] = useState<AggregatedEntry[]>([]);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const updateConfig = useCallback((partial: Partial<TogglConfig>) => {
     setConfig((prev) => {
@@ -131,32 +129,55 @@ export function useToggl() {
     }
   }, []);
 
-  /** Fetch time entries for a service month and aggregate by date */
+  useEffect(() => {
+    if (!config.apiToken) {
+      setTokenValid(null);
+      setWorkspaceId(null);
+      setTogglClients([]);
+      return;
+    }
+    if (tokenValid === null && !validating) {
+      void validateToken(config.apiToken);
+    }
+  }, [config.apiToken, tokenValid, validating, validateToken]);
+
+  /** Fetch time entries for a service month range */
   const fetchEntries = useCallback(
     async (
       serviceMonth: string,
-      togglClientId: number | undefined,
-      existingDates: Set<string>
+      serviceMonthEnd: string | undefined,
+      togglClientId: number | undefined
     ) => {
-      if (!config.apiToken) return;
+      if (!config.apiToken) {
+        setSyncError("Missing Toggl API token. Open settings and connect.");
+        return;
+      }
       setFetching(true);
       setPendingEntries([]);
+      setSyncError(null);
       try {
-        // serviceMonth is "YYYY-MM"
-        const [year, month] = serviceMonth.split("-").map(Number);
-        const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
-        // End date: first day of next month
-        const nextMonth = new Date(year, month, 1);
+        // serviceMonth/serviceMonthEnd are "YYYY-MM"
+        const [startYear, startMonth] = serviceMonth.split("-").map(Number);
+        const rangeEnd = serviceMonthEnd || serviceMonth;
+        const [endYear, endMonth] = rangeEnd.split("-").map(Number);
+        const startDate = `${startYear}-${String(startMonth).padStart(2, "0")}-01`;
+        // End date is exclusive in Toggl API: first day of month after range end.
+        const nextMonth = new Date(endYear, endMonth, 1);
         const endDate = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-${String(nextMonth.getDate()).padStart(2, "0")}`;
 
-        const url = new URL(`${BASE_URL}/me/time_entries`);
-        url.searchParams.set("start_date", startDate);
-        url.searchParams.set("end_date", endDate);
+        const params = new URLSearchParams({
+          start_date: startDate,
+          end_date: endDate,
+        });
+        const url = `${BASE_URL}/me/time_entries?${params.toString()}`;
 
-        const res = await fetch(url.toString(), {
+        const res = await fetch(url, {
           headers: authHeaders(config.apiToken),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          setSyncError(`Sync failed (${res.status}). Check token and try again.`);
+          return;
+        }
 
         const allEntries: TogglTimeEntry[] = await res.json();
 
@@ -184,9 +205,11 @@ export function useToggl() {
           }
         }
 
-        const aggregated = aggregateByDate(filtered, existingDates);
-        setPendingEntries(aggregated);
+        const rows = aggregateByDate(filtered);
+        setPendingEntries(rows);
         setHasFetched(true);
+      } catch {
+        setSyncError("Sync failed due to a network or proxy issue.");
       } finally {
         setFetching(false);
       }
@@ -199,14 +222,16 @@ export function useToggl() {
     return entries.map((e) => ({
       id: generateId(),
       date: e.date,
-      service: e.descriptions.join("; "),
+      service: e.descriptions.join(", "),
       hours: e.hours,
+      togglKey: e.key,
     }));
   }, []);
 
   const clearPending = useCallback(() => {
     setPendingEntries([]);
     setHasFetched(false);
+    setSyncError(null);
   }, []);
 
   return {
@@ -220,6 +245,7 @@ export function useToggl() {
     fetching,
     hasFetched,
     pendingEntries,
+    syncError,
     fetchEntries,
     toLineItems,
     clearPending,

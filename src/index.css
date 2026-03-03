@@ -16,3 +16,15 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+.line-item-date {
+  width: fit-content;
+  min-width: 106px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.line-item-date::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}

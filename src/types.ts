@@ -13,6 +13,7 @@ export interface LineItem {
   date: string;
   service: string;
   hours: number;
+  togglKey?: string;
 }
 
 export type NetTerms = 15 | 30 | 45 | 60;
@@ -22,6 +23,7 @@ export interface InvoiceData {
   invoiceNumber: string;
   issuedDate: string;
   serviceMonth: string; // "YYYY-MM" format
+  serviceMonthEnd?: string; // optional end month for a contiguous range
   lineItems: LineItem[];
 }
 
