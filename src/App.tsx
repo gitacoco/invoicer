@@ -162,9 +162,12 @@ export default function App() {
   }, [panelWidth]);
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-[#f5f7f2]">
       {/* Left: Input form */}
-      <div className="shrink-0 bg-white overflow-hidden" style={{ width: panelWidth }}>
+      <div
+        className="shrink-0 bg-[#f8faf6] border-r border-[#e2e7de] overflow-hidden"
+        style={{ width: panelWidth }}
+      >
         <InvoiceForm
           invoice={invoice}
           client={selectedClient}
@@ -202,15 +205,15 @@ export default function App() {
 
       {/* Resize handle */}
       <div
-        className="w-1 shrink-0 cursor-col-resize bg-gray-200 hover:bg-brand/40 active:bg-brand/60 transition-colors"
+        className="w-1 shrink-0 cursor-col-resize bg-[#e1e6dc] hover:bg-[#ccd5c8] active:bg-[#b8c4b5] transition-colors"
         onMouseDown={handleDragStart}
       />
 
       {/* Right: Preview + actions */}
-      <div className="flex-1 flex flex-col overflow-hidden relative">
+      <div className="flex-1 flex flex-col overflow-hidden relative bg-[#f4f7f2]">
         <div className="flex-1 overflow-auto p-8 flex flex-col items-center">
           {selectedClient ? (
-            <div className="shadow-lg rounded-lg overflow-hidden">
+            <div className="shadow-[0_10px_24px_rgba(15,23,42,0.10)] border border-[#dce2d8] rounded-xl overflow-hidden">
               <InvoicePreview
                 invoice={invoice}
                 client={selectedClient}
@@ -230,22 +233,22 @@ export default function App() {
         </div>
         {/* Floating bottom action toolbar */}
         {selectedClient && (
-          <div className="absolute inset-x-0 bottom-4 z-20 flex justify-center pointer-events-none px-6">
-            <div className="pointer-events-auto bg-white/95 backdrop-blur border border-gray-200 shadow-lg rounded-xl px-3 py-2 flex items-center gap-2">
+          <div className="absolute inset-x-0 bottom-5 z-20 pointer-events-none flex justify-center px-4">
+            <div className="pointer-events-auto w-fit bg-[rgba(218,225,214,0.68)] backdrop-blur-xl border border-[rgba(191,202,188,0.85)] shadow-[0_12px_30px_rgba(35,49,42,0.14)] rounded-[999px] px-2.5 py-2 flex items-center gap-2">
               <button
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-dark hover:bg-gray-50 transition-colors"
+                className="h-10 border border-[rgba(178,191,176,0.95)] bg-[rgba(241,245,239,0.72)] rounded-[999px] px-6 text-[13px] font-medium tracking-[0.01em] text-[#24322d] hover:bg-[rgba(245,248,243,0.92)] transition-colors"
                 onClick={handleSave}
               >
                 Save
               </button>
               <button
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-red-600 transition-colors"
+                className="h-10 border border-[rgba(178,191,176,0.95)] bg-[rgba(241,245,239,0.72)] rounded-[999px] px-6 text-[13px] font-medium tracking-[0.01em] text-[#4e5c56] hover:bg-[rgba(245,248,243,0.92)] hover:text-[#7b2f2f] transition-colors"
                 onClick={handleClearAllEntries}
               >
                 Clear all entries
               </button>
               <button
-                className="bg-brand text-white font-semibold rounded-lg px-4 py-2 text-sm hover:bg-brand/90 transition-colors disabled:opacity-50 min-w-[140px]"
+                className="h-10 bg-[#31566f] text-white font-semibold rounded-[999px] px-7 text-[13px] tracking-[0.01em] hover:bg-[#26495f] transition-colors disabled:opacity-50 min-w-[148px]"
                 onClick={handleExportPdf}
                 disabled={exporting}
               >

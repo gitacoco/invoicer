@@ -34,13 +34,24 @@ export interface AggregatedEntry {
   descriptions: string[];
 }
 
+function toLocalDateKey(dateTime: string): string {
+  const d = new Date(dateTime);
+  if (Number.isNaN(d.getTime())) {
+    return dateTime.slice(0, 10);
+  }
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /** Group raw Toggl entries by day into one importable row per date. */
 function aggregateByDate(entries: TogglTimeEntry[]): AggregatedEntry[] {
   const map = new Map<string, { seconds: number; descs: string[] }>();
 
   for (const e of entries) {
     if (e.duration < 0) continue; // skip running timers
-    const date = e.start.slice(0, 10);
+    const date = toLocalDateKey(e.start);
     const existing = map.get(date);
 
     if (existing) {

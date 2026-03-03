@@ -1,9 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", system-ui, sans-serif;
-  --color-brand: #006b51;
-  --color-brand-light: rgba(0, 107, 81, 0.1);
+  --font-sans: "Inter", "Helvetica Neue", "Avenir Next", system-ui, sans-serif;
+  --font-editorial: "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --color-brand: #2f5168;
+  --color-brand-light: rgba(47, 81, 104, 0.1);
   --color-dark: #121722;
   --color-muted: #60737d;
   --color-link: #334bc8;
@@ -12,6 +13,7 @@
 
 body {
   margin: 0;
+  background: #f5f7f2;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

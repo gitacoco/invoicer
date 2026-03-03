@@ -6,6 +6,15 @@ function generateId(): string {
   return `item-${Date.now()}-${nextId++}`;
 }
 
+function isBlankLineItem(item: LineItem): boolean {
+  return !item.date && !item.service.trim() && (item.hours || 0) === 0;
+}
+
+function normalizeLineItems(items: LineItem[]): LineItem[] {
+  if (items.length === 1 && isBlankLineItem(items[0])) return [];
+  return items;
+}
+
 function getDefaultInvoice(
   clientId: string,
   serviceMonth?: string,
@@ -24,7 +33,7 @@ function getDefaultInvoice(
     issuedDate: `${year}-${month}-${String(now.getDate()).padStart(2, "0")}`,
     serviceMonth: serviceMonth ?? `${smYear}-${smMonth}`,
     serviceMonthEnd,
-    lineItems: [{ id: generateId(), date: "", service: "", hours: 0 }],
+    lineItems: [],
   };
 }
 
@@ -84,7 +93,10 @@ export function useInvoiceState(clientId: string) {
   );
 
   const loadInvoice = useCallback((data: InvoiceData) => {
-    setInvoice(data);
+    setInvoice({
+      ...data,
+      lineItems: normalizeLineItems(data.lineItems),
+    });
   }, []);
 
   /** Append new line items (used by Toggl sync) */

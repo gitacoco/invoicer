@@ -1,6 +1,11 @@
 import { useState } from "react";
 import type { InvoiceData, Client, LineItem } from "../types";
 import {
+  fetchAiConfig,
+  rewriteServiceText,
+  saveAiConfig,
+} from "../hooks/useAiRewrite";
+import {
   formatCurrency,
   formatDate,
   formatHours,
@@ -34,6 +39,11 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 export default function InvoicePreview({
   invoice,
   client,
@@ -45,6 +55,23 @@ export default function InvoicePreview({
   updateLineItem,
 }: Props) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [aiConfigLoaded, setAiConfigLoaded] = useState(false);
+  const [aiHasApiKey, setAiHasApiKey] = useState(false);
+  const [aiConfigLoading, setAiConfigLoading] = useState(false);
+  const [aiKeyDraft, setAiKeyDraft] = useState("");
+  const [aiSavingKey, setAiSavingKey] = useState(false);
+  const [aiRewritingItemId, setAiRewritingItemId] = useState<string | null>(
+    null
+  );
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    itemId: string;
+    text: string;
+  } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showAiKeyForItemId, setShowAiKeyForItemId] = useState<string | null>(
+    null
+  );
+
   const themeColor = client.themeColor || "#006b51";
   const paymentDueDate = computePaymentDueDate(
     invoice.issuedDate,
@@ -79,6 +106,81 @@ export default function InvoicePreview({
       return;
     }
     updateField("serviceMonthEnd", nextEnd);
+  };
+
+  const loadAiConfigIfNeeded = async (): Promise<boolean> => {
+    if (aiConfigLoaded) return aiHasApiKey;
+    setAiConfigLoading(true);
+    try {
+      const config = await fetchAiConfig();
+      setAiConfigLoaded(true);
+      setAiHasApiKey(config.hasApiKey);
+      return config.hasApiKey;
+    } catch (error) {
+      setAiError(getErrorMessage(error, "Failed to load AI settings."));
+      return false;
+    } finally {
+      setAiConfigLoading(false);
+    }
+  };
+
+  const handleAiRewrite = async (item: LineItem) => {
+    const source = item.service.trim();
+    if (!source) {
+      setAiError("Please enter service text before rewriting.");
+      return;
+    }
+    setAiSuggestion(null);
+    setAiError(null);
+    const hasApiKey = await loadAiConfigIfNeeded();
+    if (!hasApiKey) {
+      setShowAiKeyForItemId(item.id);
+      setAiError("Enter your MiniMax API key once to enable rewrite.");
+      return;
+    }
+    setShowAiKeyForItemId(null);
+    setAiRewritingItemId(item.id);
+    try {
+      const rewritten = await rewriteServiceText(source);
+      setAiSuggestion({ itemId: item.id, text: rewritten });
+    } catch (error) {
+      setAiError(getErrorMessage(error, "AI rewrite failed."));
+    } finally {
+      setAiRewritingItemId(null);
+    }
+  };
+
+  const handleSaveAiKey = async (item: LineItem) => {
+    const apiKey = aiKeyDraft.trim();
+    if (!apiKey) {
+      setAiError("API key cannot be empty.");
+      return;
+    }
+    setAiSavingKey(true);
+    setAiError(null);
+    try {
+      await saveAiConfig(apiKey);
+      setAiConfigLoaded(true);
+      setAiHasApiKey(true);
+      setAiKeyDraft("");
+      setShowAiKeyForItemId(null);
+      const source = item.service.trim();
+      if (!source) return;
+      setAiRewritingItemId(item.id);
+      const rewritten = await rewriteServiceText(source);
+      setAiSuggestion({ itemId: item.id, text: rewritten });
+    } catch (error) {
+      setAiError(getErrorMessage(error, "Failed to save API key."));
+    } finally {
+      setAiRewritingItemId(null);
+      setAiSavingKey(false);
+    }
+  };
+
+  const clearAiUi = () => {
+    setShowAiKeyForItemId(null);
+    setAiSuggestion(null);
+    setAiError(null);
   };
 
   return (
@@ -232,120 +334,238 @@ export default function InvoicePreview({
         {/* Line items table */}
         <div className="flex flex-col w-full">
           {/* Table header */}
-          <div className="flex gap-3 px-5 pt-2 text-[10px] text-muted items-center">
-            <span className="w-[80px] shrink-0">Date</span>
-            <span className="flex-1">Service</span>
-            <span className="w-[41px] shrink-0 text-right">Hours</span>
-            {addLineItem && (
-              <button
-                type="button"
-                className="text-[10px] text-brand hover:underline ml-2"
-                onClick={addLineItem}
-              >
-                + Add
-              </button>
-            )}
+          <div className="grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 px-5 pt-2 text-[10px] text-muted items-center">
+            <span>Date</span>
+            <span>Service</span>
+            <span className="text-right">Hours</span>
           </div>
 
           {/* Line items */}
           <div className="flex flex-col gap-[5px] px-5 pt-2">
-            {visibleItems.map((item) => (
-              <div key={item.id} className="flex gap-3 items-start text-[11px] group">
-                {editingKey === `li-${item.id}-date` ? (
-                  <input
-                    autoFocus
-                    type="date"
-                    className="w-[112px] shrink-0 font-medium text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand"
-                    value={item.date}
-                    onChange={(e) =>
-                      updateLineItem?.(item.id, "date", e.target.value)
-                    }
-                    onBlur={() => setEditingKey(null)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === "Escape") {
-                        setEditingKey(null);
-                      }
-                    }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="w-[80px] shrink-0 font-medium text-dark text-left rounded px-1 -mx-1 hover:bg-gray-100 transition-colors"
-                    onClick={() => setEditingKey(`li-${item.id}-date`)}
-                  >
-                    {item.date || "—"}
-                  </button>
-                )}
+            {visibleItems.map((item) => {
+              const isServiceEditing = editingKey === `li-${item.id}-service`;
+              const isRewriting = aiRewritingItemId === item.id;
+              const showApiKeyPrompt = showAiKeyForItemId === item.id;
+              const suggestionForItem =
+                aiSuggestion?.itemId === item.id ? aiSuggestion.text : null;
+              const needsExtraRoom =
+                isServiceEditing && (showApiKeyPrompt || suggestionForItem || aiError);
 
-                {editingKey === `li-${item.id}-service` ? (
-                  <input
-                    autoFocus
-                    className="flex-1 text-muted border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand min-w-0"
-                    value={item.service}
-                    onChange={(e) =>
-                      updateLineItem?.(item.id, "service", e.target.value)
-                    }
-                    onBlur={() => setEditingKey(null)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === "Escape") {
-                        setEditingKey(null);
+              return (
+                <div
+                  key={item.id}
+                  className={`relative grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-start text-[11px] group ${
+                    needsExtraRoom ? "pb-24" : ""
+                  }`}
+                >
+                  {editingKey === `li-${item.id}-date` ? (
+                    <input
+                      autoFocus
+                      type="date"
+                      className="w-full font-medium text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand"
+                      value={item.date}
+                      onChange={(e) =>
+                        updateLineItem?.(item.id, "date", e.target.value)
                       }
-                    }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="flex-1 text-muted text-left rounded px-1 -mx-1 hover:bg-gray-100 transition-colors min-w-0 truncate"
-                    onClick={() => setEditingKey(`li-${item.id}-service`)}
-                  >
-                    {item.service || "Service description"}
-                  </button>
-                )}
+                      onBlur={() => setEditingKey(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === "Escape") {
+                          setEditingKey(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="font-medium text-dark text-left rounded hover:bg-gray-100 transition-colors"
+                      onClick={() => setEditingKey(`li-${item.id}-date`)}
+                    >
+                      {item.date || "—"}
+                    </button>
+                  )}
 
-                {editingKey === `li-${item.id}-hours` ? (
-                  <input
-                    autoFocus
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    className="w-[52px] shrink-0 text-right text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand"
-                    value={item.hours || ""}
-                    onChange={(e) =>
-                      updateLineItem?.(
-                        item.id,
-                        "hours",
-                        parseFloat(e.target.value) || 0
-                      )
-                    }
-                    onBlur={() => setEditingKey(null)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === "Escape") {
-                        setEditingKey(null);
+                  {isServiceEditing ? (
+                    <div className="relative min-w-0" data-ai-editor={item.id}>
+                      <input
+                        autoFocus
+                        className="w-full text-muted border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand min-w-0"
+                        value={item.service}
+                        onChange={(e) =>
+                          updateLineItem?.(item.id, "service", e.target.value)
+                        }
+                        onBlur={() => {
+                          window.requestAnimationFrame(() => {
+                            const active = document.activeElement as HTMLElement | null;
+                            if (active?.closest(`[data-ai-editor=\"${item.id}\"]`)) {
+                              return;
+                            }
+                            setEditingKey(null);
+                            clearAiUi();
+                          });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setEditingKey(null);
+                            clearAiUi();
+                          }
+                        }}
+                      />
+                      <div className="absolute left-0 top-full mt-1 z-10">
+                        <button
+                          type="button"
+                          className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors disabled:opacity-60"
+                          onClick={() => {
+                            void handleAiRewrite(item);
+                          }}
+                          disabled={isRewriting || aiSavingKey || aiConfigLoading}
+                        >
+                          {isRewriting
+                            ? "Rewriting..."
+                            : aiConfigLoading
+                            ? "Loading..."
+                            : "AI Rewrite"}
+                        </button>
+                      </div>
+
+                      {(showApiKeyPrompt || suggestionForItem || aiError) && (
+                        <div className="absolute left-0 top-full mt-8 z-20 w-[340px] border border-[#dbe3d8] bg-white rounded-md p-2 shadow-sm">
+                          {showApiKeyPrompt && (
+                            <div className="flex flex-col gap-2">
+                              <div className="text-[10px] text-[#5d6761]">
+                                Enter MiniMax API key (saved locally on this
+                                machine).
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="password"
+                                  className="flex-1 border border-gray-200 rounded px-1.5 py-1 text-[10px] outline-none focus:border-brand"
+                                  value={aiKeyDraft}
+                                  onChange={(e) => setAiKeyDraft(e.target.value)}
+                                  placeholder="sk-..."
+                                />
+                                <button
+                                  type="button"
+                                  className="h-7 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors disabled:opacity-60"
+                                  onClick={() => {
+                                    void handleSaveAiKey(item);
+                                  }}
+                                  disabled={aiSavingKey}
+                                >
+                                  {aiSavingKey ? "Saving..." : "Save key"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {suggestionForItem && (
+                            <div className="flex flex-col gap-2">
+                              <div className="text-[10px] text-[#1f2a27]">
+                                {suggestionForItem}
+                              </div>
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] text-[#5d6761] hover:bg-[#f2f5f1] transition-colors"
+                                  onClick={() => setAiSuggestion(null)}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="h-6 px-2 rounded-md text-[10px] font-medium bg-[#2f5168] text-white hover:bg-[#233e50] transition-colors"
+                                  onClick={() => {
+                                    updateLineItem?.(
+                                      item.id,
+                                      "service",
+                                      suggestionForItem
+                                    );
+                                    setAiSuggestion(null);
+                                  }}
+                                >
+                                  Replace
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {aiError && (
+                            <div className="text-[10px] text-[#a22f2f] mt-2">
+                              {aiError}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-muted text-left rounded hover:bg-gray-100 transition-colors min-w-0 truncate"
+                      onClick={() => {
+                        setEditingKey(`li-${item.id}-service`);
+                        clearAiUi();
+                      }}
+                    >
+                      {item.service || "Service description"}
+                    </button>
+                  )}
+
+                  {editingKey === `li-${item.id}-hours` ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="w-full text-right text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand"
+                      value={item.hours || ""}
+                      onChange={(e) =>
+                        updateLineItem?.(
+                          item.id,
+                          "hours",
+                          parseFloat(e.target.value) || 0
+                        )
                       }
-                    }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="w-[41px] shrink-0 text-right text-dark rounded px-1 -mx-1 hover:bg-gray-100 transition-colors"
-                    onClick={() => setEditingKey(`li-${item.id}-hours`)}
-                  >
-                    {item.hours ? formatHours(item.hours) : "—"}
-                  </button>
-                )}
+                      onBlur={() => setEditingKey(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === "Escape") {
+                          setEditingKey(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-right text-dark rounded hover:bg-gray-100 transition-colors"
+                      onClick={() => setEditingKey(`li-${item.id}-hours`)}
+                    >
+                      {item.hours ? formatHours(item.hours) : "—"}
+                    </button>
+                  )}
 
-                {removeLineItem && visibleItems.length > 1 && (
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 text-[10px] text-gray-400 hover:text-red-500 transition-opacity"
-                    onClick={() => removeLineItem(item.id)}
-                    title="Remove row"
-                  >
-                    x
-                  </button>
-                )}
-              </div>
-            ))}
+                  {removeLineItem && visibleItems.length > 1 && (
+                    <button
+                      type="button"
+                      className="absolute -right-5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] text-gray-400 hover:text-red-500 transition-opacity"
+                      onClick={() => removeLineItem(item.id)}
+                      title="Remove row"
+                    >
+                      x
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {addLineItem && (
+              <button
+                type="button"
+                className="grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-center text-[11px] rounded hover:bg-gray-100 transition-colors text-left"
+                onClick={addLineItem}
+              >
+                <span className="text-brand font-medium">+ Add</span>
+                <span aria-hidden="true" />
+                <span aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
 
