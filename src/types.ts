@@ -27,11 +27,26 @@ export interface InvoiceData {
   lineItems: LineItem[];
 }
 
-export interface SavedInvoice {
-  key: string;
-  label: string;
+export interface InvoiceRecord {
+  id: string;
+  clientId: string;
+  referenceName?: string;
+  createdAt: string;
+  updatedAt: string;
   data: InvoiceData;
-  savedAt: string;
+}
+
+export interface CompanySettings {
+  companyName: string;
+  companyLogoDataUrl?: string;
+  companyAddress: string;
+  contactEmail: string;
+  ein: string;
+  guidanceLanguage: string;
+  routingNumber: string;
+  accountNumber: string;
+  receivingBank: string;
+  bankAddress: string;
 }
 
 /* ── Toggl Track Integration ── */

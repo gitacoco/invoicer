@@ -2,6 +2,44 @@ import { useState, useEffect } from "react";
 import type { Client, TogglConfig, TogglClient } from "../types";
 import type { AggregatedEntry } from "../hooks/useToggl";
 
+function EyeIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="m3 3 18 18" />
+      <path d="M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.4" />
+      <path d="M9.9 5.1A10.7 10.7 0 0 1 12 5c7 0 11 7 11 7a21.8 21.8 0 0 1-5.2 5.9" />
+      <path d="M6.2 6.2A21.6 21.6 0 0 0 1 12s4 7 11 7a10.9 10.9 0 0 0 2.1-.2" />
+    </svg>
+  );
+}
+
 /* ── Toggl Settings Panel (shown in a modal) ── */
 
 interface SettingsProps {
@@ -28,9 +66,13 @@ export function TogglSettingsModal({
   clients,
 }: SettingsProps) {
   const [tokenDraft, setTokenDraft] = useState(config.apiToken);
+  const [showApiToken, setShowApiToken] = useState(false);
 
   useEffect(() => {
-    if (open) setTokenDraft(config.apiToken);
+    if (open) {
+      setTokenDraft(config.apiToken);
+      setShowApiToken(false);
+    }
   }, [open, config.apiToken]);
 
   // Re-validate on open if we already have a token
@@ -53,12 +95,21 @@ export function TogglSettingsModal({
           <span className="text-[11px] text-gray-500">API Token</span>
           <div className="flex gap-2">
             <input
-              type="text"
+              type={showApiToken ? "text" : "password"}
               className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30 font-mono"
               value={tokenDraft}
               onChange={(e) => setTokenDraft(e.target.value)}
               placeholder="Paste your Toggl API token"
             />
+            <button
+              type="button"
+              className="shrink-0 h-[38px] w-[38px] inline-flex items-center justify-center border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors"
+              onClick={() => setShowApiToken((prev) => !prev)}
+              aria-label={showApiToken ? "Hide API token" : "Show API token"}
+              title={showApiToken ? "Hide API token" : "Show API token"}
+            >
+              {showApiToken ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
             <button
               className="shrink-0 bg-brand text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-brand/90 transition-colors disabled:opacity-50"
               disabled={!tokenDraft.trim() || validating}

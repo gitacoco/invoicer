@@ -1,14 +1,74 @@
-import { useState, useCallback, useMemo, useRef } from "react";
-import { ClientModal } from "./components/ClientSelector";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { ClientModal, ClientPicker } from "./components/ClientSelector";
+import CompanySettingsModal from "./components/CompanySettingsModal";
 import InvoiceForm from "./components/InvoiceForm";
 import InvoicePreview from "./components/InvoicePreview";
-import { TogglSettingsModal } from "./components/TogglIntegration";
-import { useInvoiceState } from "./hooks/useInvoiceState";
+import { fetchAiConfigSecret, saveAiConfig } from "./hooks/useAiRewrite";
+import { useCompanySettings } from "./hooks/useCompanySettings";
+import { createDefaultInvoice, useInvoiceState } from "./hooks/useInvoiceState";
 import { useClients } from "./hooks/useClients";
-import { useLocalStorage } from "./hooks/useLocalStorage";
+import { useInvoices } from "./hooks/useInvoices";
 import { useToggl } from "./hooks/useToggl";
+import { resolveAssetUrl } from "./utils/assets";
 import { exportPdf } from "./utils/exportPdf";
-import type { Client } from "./types";
+import type { Client, CompanySettings, InvoiceRecord } from "./types";
+
+function PencilIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4L7 21l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function Trash2Icon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
 
 export default function App() {
   const { clients, addClient, updateClient } = useClients();
@@ -18,11 +78,25 @@ export default function App() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
-  const [togglModalOpen, setTogglModalOpen] = useState(false);
-
   const [exporting, setExporting] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(420);
-  const dragging = useRef(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [renamingInvoice, setRenamingInvoice] = useState(false);
+  const [deletingInvoice, setDeletingInvoice] = useState(false);
+  const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
+  const [companySettingsSaving, setCompanySettingsSaving] = useState(false);
+  const [initialMinimaxApiKey, setInitialMinimaxApiKey] = useState("");
+  const [clearEntriesConfirmOpen, setClearEntriesConfirmOpen] = useState(false);
+  const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(null);
+  const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
+  const [invoiceSaveStatus, setInvoiceSaveStatus] = useState<
+    "saved" | "saving" | "error"
+  >("saved");
+  const [invoiceSaveError, setInvoiceSaveError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<InvoiceRecord | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<InvoiceRecord | null>(null);
+  const lastSavedSnapshotRef = useRef("");
+  const autoSaveSeqRef = useRef(0);
 
   const {
     invoice,
@@ -42,9 +116,22 @@ export default function App() {
     [totalHours, hourlyRate]
   );
 
-  const { savedInvoices, saveInvoice, deleteInvoice } = useLocalStorage();
+  const {
+    settings: companySettings,
+    loading: companySettingsLoading,
+    save: saveCompanySettings,
+  } = useCompanySettings();
+
+  const {
+    invoices,
+    createInvoice,
+    updateInvoice,
+    deleteInvoice: deleteStoredInvoice,
+    renameInvoice,
+  } = useInvoices(selectedClient?.id ?? null);
 
   const toggl = useToggl();
+  const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
 
   const handleTogglSync = useCallback(() => {
     if (!invoice.serviceMonth) return;
@@ -91,36 +178,61 @@ export default function App() {
     mergeLineItems(toggl.toLineItems(unimported));
   }, [toggl, importedTogglKeys, mergeLineItems]);
 
+  const handleTogglClientFilterChange = useCallback(
+    (togglClientId?: number) => {
+      if (!selectedClient) return;
+      const nextClientMap = { ...toggl.config.clientMap };
+      if (togglClientId == null) {
+        delete nextClientMap[selectedClient.id];
+      } else {
+        nextClientMap[selectedClient.id] = togglClientId;
+      }
+      toggl.updateConfig({ clientMap: nextClientMap });
+      toggl.clearPending();
+    },
+    [selectedClient, toggl]
+  );
+
   const handleExportPdf = useCallback(async () => {
     if (!selectedClient) return;
     setExporting(true);
     try {
       const filename = invoice.invoiceNumber || "invoice";
       await exportPdf(
-        { invoice, client: selectedClient, totalHours, balanceDue },
+        {
+          invoice,
+          client: selectedClient,
+          companySettings,
+          totalHours,
+          balanceDue,
+        },
         filename
       );
     } finally {
       setExporting(false);
     }
-  }, [invoice, selectedClient, totalHours, balanceDue]);
-
-  const handleSave = useCallback(() => {
-    if (!selectedClient) return;
-    saveInvoice(invoice, selectedClient);
-  }, [invoice, selectedClient, saveInvoice]);
+  }, [balanceDue, companySettings, invoice, selectedClient, totalHours]);
 
   const handleClearAllEntries = useCallback(() => {
-    const confirmed = window.confirm(
-      "Clear all invoice entries? This will remove imported and manual items."
-    );
-    if (!confirmed) return;
+    setClearEntriesConfirmOpen(true);
+  }, []);
+
+  const handleConfirmClearAllEntries = useCallback(() => {
     updateField("lineItems", []);
+    setClearEntriesConfirmOpen(false);
   }, [updateField]);
 
   const handleSelectClient = useCallback(
     (client: Client) => {
       setSelectedClient(client);
+      setActiveInvoiceId(null);
+      setIsInvoiceOpen(false);
+      setRenameTarget(null);
+      setDeleteTarget(null);
+      setClearEntriesConfirmOpen(false);
+      setInvoiceSaveStatus("saved");
+      setInvoiceSaveError(null);
+      lastSavedSnapshotRef.current = "";
       resetInvoice(client.id);
     },
     [resetInvoice]
@@ -129,6 +241,14 @@ export default function App() {
   const handleClientCreated = useCallback(
     (client: Client) => {
       setSelectedClient(client);
+      setActiveInvoiceId(null);
+      setIsInvoiceOpen(false);
+      setRenameTarget(null);
+      setDeleteTarget(null);
+      setClearEntriesConfirmOpen(false);
+      setInvoiceSaveStatus("saved");
+      setInvoiceSaveError(null);
+      lastSavedSnapshotRef.current = "";
       resetInvoice(client.id);
     },
     [resetInvoice]
@@ -136,87 +256,407 @@ export default function App() {
 
   const handleMonthSelect = useCallback(
     (startMonth: string, endMonth?: string) => {
-      resetInvoice(undefined, startMonth, endMonth);
+      updateField("serviceMonth", startMonth);
+      updateField("serviceMonthEnd", endMonth);
     },
-    [resetInvoice]
+    [updateField]
   );
 
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    const startX = e.clientX;
-    const startW = panelWidth;
+  const handleCreateInvoice = useCallback(() => {
+    if (!selectedClient || creatingInvoice) return;
+    const draft = createDefaultInvoice(selectedClient.id);
+    setCreatingInvoice(true);
+    void (async () => {
+      try {
+        const created = await createInvoice(draft);
+        setActiveInvoiceId(created.id);
+        setIsInvoiceOpen(true);
+        loadInvoice(created.data);
+        lastSavedSnapshotRef.current = JSON.stringify(created.data);
+        setInvoiceSaveStatus("saved");
+        setInvoiceSaveError(null);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to create invoice.";
+        window.alert(message);
+      } finally {
+        setCreatingInvoice(false);
+      }
+    })();
+  }, [createInvoice, creatingInvoice, loadInvoice, selectedClient]);
 
-    function onMove(ev: MouseEvent) {
-      if (!dragging.current) return;
-      const newW = Math.min(Math.max(startW + ev.clientX - startX, 320), 700);
-      setPanelWidth(newW);
+  const handleOpenInvoice = useCallback(
+    (record: InvoiceRecord) => {
+      setActiveInvoiceId(record.id);
+      setIsInvoiceOpen(true);
+      loadInvoice(record.data);
+      lastSavedSnapshotRef.current = JSON.stringify(record.data);
+      setInvoiceSaveStatus("saved");
+      setInvoiceSaveError(null);
+    },
+    [loadInvoice]
+  );
+
+  const getReferenceName = useCallback((record: InvoiceRecord): string => {
+    return (
+      record.referenceName?.trim() ||
+      record.data.invoiceNumber?.trim() ||
+      "Untitled Invoice"
+    );
+  }, []);
+
+  const openRenameDialog = useCallback(
+    (record: InvoiceRecord) => {
+      setRenameTarget(record);
+      setRenameValue(getReferenceName(record));
+    },
+    [getReferenceName]
+  );
+
+  const openDeleteDialog = useCallback((record: InvoiceRecord) => {
+    setDeleteTarget(record);
+  }, []);
+
+  const handleConfirmRename = useCallback(() => {
+    if (!renameTarget || renamingInvoice) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      window.alert("Invoice name cannot be empty.");
+      return;
     }
-    function onUp() {
-      dragging.current = false;
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+    setRenamingInvoice(true);
+    void (async () => {
+      try {
+        await renameInvoice(renameTarget.id, nextName);
+        setRenameTarget(null);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to rename invoice.";
+        window.alert(message);
+      } finally {
+        setRenamingInvoice(false);
+      }
+    })();
+  }, [renameInvoice, renameTarget, renameValue, renamingInvoice]);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (!deleteTarget || deletingInvoice) return;
+    setDeletingInvoice(true);
+    void (async () => {
+      try {
+        await deleteStoredInvoice(deleteTarget.id);
+        if (activeInvoiceId === deleteTarget.id && selectedClient) {
+          setActiveInvoiceId(null);
+          setIsInvoiceOpen(false);
+          setInvoiceSaveStatus("saved");
+          setInvoiceSaveError(null);
+          lastSavedSnapshotRef.current = "";
+          resetInvoice(selectedClient.id);
+        }
+        setDeleteTarget(null);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to delete invoice.";
+        window.alert(message);
+      } finally {
+        setDeletingInvoice(false);
+      }
+    })();
+  }, [
+    activeInvoiceId,
+    deleteStoredInvoice,
+    deleteTarget,
+    deletingInvoice,
+    resetInvoice,
+    selectedClient,
+  ]);
+
+  const openCompanySettings = useCallback(() => {
+    setCompanySettingsOpen(true);
+    void (async () => {
+      try {
+        const apiKey = await fetchAiConfigSecret();
+        setInitialMinimaxApiKey(apiKey);
+      } catch {
+        setInitialMinimaxApiKey("");
+      }
+    })();
+  }, []);
+
+  const handleSaveCompanySettings = useCallback(
+    async ({
+      settings,
+      togglApiToken,
+      minimaxApiKey,
+    }: {
+      settings: CompanySettings;
+      togglApiToken: string;
+      minimaxApiKey: string;
+    }) => {
+      setCompanySettingsSaving(true);
+      try {
+        await saveCompanySettings(settings);
+
+        if (togglApiToken !== toggl.config.apiToken) {
+          toggl.updateConfig({ apiToken: togglApiToken });
+          if (togglApiToken) {
+            await toggl.validateToken(togglApiToken);
+          }
+        }
+
+        if (minimaxApiKey) {
+          if (minimaxApiKey !== initialMinimaxApiKey) {
+            await saveAiConfig(minimaxApiKey);
+            setInitialMinimaxApiKey(minimaxApiKey);
+          }
+        }
+
+        setCompanySettingsOpen(false);
+      } finally {
+        setCompanySettingsSaving(false);
+      }
+    },
+    [initialMinimaxApiKey, saveCompanySettings, toggl]
+  );
+
+  useEffect(() => {
+    if (!selectedClient || !isInvoiceOpen || !activeInvoiceId) return;
+
+    const payload = { ...invoice, clientId: selectedClient.id };
+    const nextSnapshot = JSON.stringify(payload);
+    if (nextSnapshot === lastSavedSnapshotRef.current) {
+      if (invoiceSaveStatus !== "error") {
+        setInvoiceSaveStatus("saved");
+      }
+      return;
     }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [panelWidth]);
+
+    setInvoiceSaveStatus("saving");
+    setInvoiceSaveError(null);
+
+    const seq = ++autoSaveSeqRef.current;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          await updateInvoice(activeInvoiceId, payload);
+          if (autoSaveSeqRef.current !== seq) return;
+          lastSavedSnapshotRef.current = nextSnapshot;
+          setInvoiceSaveStatus("saved");
+          setInvoiceSaveError(null);
+        } catch (error) {
+          if (autoSaveSeqRef.current !== seq) return;
+          const message =
+            error instanceof Error ? error.message : "Auto-save failed.";
+          setInvoiceSaveStatus("error");
+          setInvoiceSaveError(message);
+        }
+      })();
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeInvoiceId,
+    invoice,
+    invoiceSaveStatus,
+    isInvoiceOpen,
+    selectedClient,
+    updateInvoice,
+  ]);
 
   return (
-    <div className="flex h-screen bg-[#f5f7f2]">
-      {/* Left: Input form */}
-      <div
-        className="shrink-0 bg-[#f8faf6] border-r border-[#e2e7de] overflow-hidden"
-        style={{ width: panelWidth }}
-      >
-        <InvoiceForm
-          invoice={invoice}
-          client={selectedClient}
-          clients={clients}
-          updateField={updateField}
-          onSelectClient={handleSelectClient}
-          onOpenCreateClient={() => {
-            setEditingClient(null);
-            setModalOpen(true);
-          }}
-          onOpenEditClient={(client) => {
-            setEditingClient(client);
-            setModalOpen(true);
-          }}
-          onMonthSelect={handleMonthSelect}
-          savedInvoices={savedInvoices}
-          onLoad={loadInvoice}
-          onDelete={deleteInvoice}
-          togglConfigEnabled={toggl.config.enabled}
-          togglEnabled={toggl.config.enabled && toggl.tokenValid === true}
-          togglFetching={toggl.fetching}
-          togglHasFetched={toggl.hasFetched}
-          togglPending={toggl.pendingEntries}
-          togglError={toggl.syncError}
-          togglTokenValid={toggl.tokenValid}
-          togglValidating={toggl.validating}
-          importedTogglKeys={importedTogglKeys}
-          onTogglToggle={() => toggl.updateConfig({ enabled: !toggl.config.enabled })}
-          onTogglSync={handleTogglSync}
-          onTogglImportEntry={handleTogglImportEntry}
-          onTogglImportAll={handleTogglImportAll}
-          onOpenTogglSettings={() => setTogglModalOpen(true)}
-        />
-      </div>
+    <div className="flex h-screen flex-col bg-[#f5f7f2]">
+      {/* Top nav */}
+      <header className="h-14 shrink-0 border-b border-[#d6ddd5] bg-[#f8faf6] px-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-[14px] font-semibold text-[#1f2f28] tracking-[0.02em]">
+            Bone&apos;s Invoicer
+          </h1>
+          <div className="w-[280px] max-w-[36vw]">
+            <ClientPicker
+              clients={clients}
+              selectedClient={selectedClient}
+              compact
+              showAddress={false}
+              onSelect={handleSelectClient}
+              onOpenCreate={() => {
+                setEditingClient(null);
+                setModalOpen(true);
+              }}
+              onOpenEdit={(client) => {
+                setEditingClient(client);
+                setModalOpen(true);
+              }}
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 min-w-0">
+          {companyLogoUrl && (
+            <img
+              src={companyLogoUrl}
+              alt=""
+              className="h-5 w-5 rounded-[3px] object-cover border border-[#d6ddd5] bg-white"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <div className="text-[12px] tracking-[0.01em] text-[#4f5d55] whitespace-nowrap truncate">
+            {companySettings.companyName}
+          </div>
+          <button
+            type="button"
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#edf2ed] hover:text-[#2f5168] transition-colors"
+            onClick={openCompanySettings}
+            title="Open settings"
+            aria-label="Open settings"
+          >
+            <SettingsIcon />
+          </button>
+        </div>
+      </header>
 
-      {/* Resize handle */}
-      <div
-        className="w-1 shrink-0 cursor-col-resize bg-[#e1e6dc] hover:bg-[#ccd5c8] active:bg-[#b8c4b5] transition-colors"
-        onMouseDown={handleDragStart}
-      />
+      {/* Primary side panel | Secondary side panel | Preview */}
+      <div className="flex-1 min-h-0 flex">
+        {/* Primary side panel */}
+        <aside className="w-[250px] shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] p-4 overflow-y-auto">
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="h-9 rounded-lg border border-[#d3ddd3] bg-white/85 text-[12px] font-medium text-[#2f5168] hover:bg-white transition-colors"
+              onClick={handleCreateInvoice}
+              disabled={!selectedClient || creatingInvoice}
+            >
+              {creatingInvoice ? "Creating..." : "+ New Invoice"}
+            </button>
+            <div className="flex flex-col gap-1.5">
+              {invoices.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] text-[#6f7a73] border border-[#dce4da] bg-white/90 rounded-xl">
+                  No invoices yet.
+                </div>
+              ) : (
+                invoices.map((inv) => {
+                  const isActive = inv.id === activeInvoiceId;
+                  return (
+                    <div
+                      key={inv.id}
+                      className={`group flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
+                        isActive
+                          ? "bg-[#eef3f0] border-[#d6e1d8]"
+                          : "bg-white/90 border-[#dce4da] hover:bg-[#f4f8f4]"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="flex-1 min-w-0 text-left"
+                        onClick={() => handleOpenInvoice(inv)}
+                      >
+                        <div className="text-[12px] text-[#24332c] truncate">
+                          {getReferenceName(inv)}
+                        </div>
+                        <div className="text-[10px] text-[#7b8780]">
+                          {inv.updatedAt.slice(0, 10)}
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#e8eeeb] hover:text-[#254a63] transition-colors"
+                          onClick={() => openRenameDialog(inv)}
+                          aria-label={`Rename ${getReferenceName(inv)}`}
+                          title="Rename invoice"
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#f4e7e4] hover:text-[#8a2d2d] transition-colors"
+                          onClick={() => openDeleteDialog(inv)}
+                          aria-label={`Delete ${getReferenceName(inv)}`}
+                          title="Delete invoice"
+                        >
+                          <Trash2Icon />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </aside>
 
-      {/* Right: Preview + actions */}
-      <div className="flex-1 flex flex-col overflow-hidden relative bg-[#f4f7f2]">
-        <div className="flex-1 overflow-auto p-8 flex flex-col items-center">
-          {selectedClient ? (
+        {/* Secondary side panel */}
+        <aside className="w-[430px] shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] overflow-hidden">
+          {isInvoiceOpen ? (
+            <InvoiceForm
+              invoice={invoice}
+              updateField={updateField}
+              onMonthSelect={handleMonthSelect}
+              togglConfigEnabled={toggl.config.enabled}
+              togglFetching={toggl.fetching}
+              togglClients={toggl.togglClients}
+              selectedTogglClientId={
+                selectedClient
+                  ? toggl.config.clientMap[selectedClient.id]
+                  : undefined
+              }
+              togglPending={toggl.pendingEntries}
+              togglError={toggl.syncError}
+              importedTogglKeys={importedTogglKeys}
+              onTogglToggle={() => toggl.updateConfig({ enabled: !toggl.config.enabled })}
+              onTogglClientChange={handleTogglClientFilterChange}
+              onTogglSync={handleTogglSync}
+              onTogglImportEntry={handleTogglImportEntry}
+              onTogglImportAll={handleTogglImportAll}
+            />
+          ) : (
+            <div className="h-full flex items-center justify-center text-[12px] text-[#6f7a73] px-8 text-center">
+              Select an existing invoice or click + New Invoice to start editing.
+            </div>
+          )}
+        </aside>
+
+        {/* Preview area */}
+        <div className="flex-1 flex flex-col overflow-hidden relative bg-[#e6e6e6]">
+          <div className="flex-1 overflow-auto p-8 flex flex-col items-center bg-[#f0f0f0]">
+          {selectedClient && isInvoiceOpen && (
+            <div className="w-[595px] mb-2 flex justify-center">
+              <div
+                className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] border ${
+                  invoiceSaveStatus === "saving"
+                    ? "bg-[#eef3ef] text-[#4f5d55] border-[#d7e0d5]"
+                    : invoiceSaveStatus === "error"
+                      ? "bg-[#f7ecea] text-[#8a2d2d] border-[#ebc9c5]"
+                      : "bg-[#edf3ef] text-[#2f6a4b] border-[#d5e4db]"
+                }`}
+                title={invoiceSaveError ?? undefined}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    invoiceSaveStatus === "saving"
+                      ? "bg-[#6b7b73] animate-pulse"
+                      : invoiceSaveStatus === "error"
+                        ? "bg-[#a83d3d]"
+                        : "bg-[#2f6a4b]"
+                  }`}
+                  aria-hidden="true"
+                />
+                <span>
+                  {invoiceSaveStatus === "saving"
+                    ? "Saving changes..."
+                    : invoiceSaveStatus === "error"
+                      ? "Auto-save failed"
+                      : "All changes saved"}
+                </span>
+              </div>
+            </div>
+          )}
+          {selectedClient && isInvoiceOpen ? (
             <div className="shadow-[0_10px_24px_rgba(15,23,42,0.10)] border border-[#dce2d8] rounded-xl overflow-hidden">
               <InvoicePreview
                 invoice={invoice}
                 client={selectedClient}
+                companySettings={companySettings}
                 totalHours={totalHours}
                 balanceDue={balanceDue}
                 updateField={updateField}
@@ -232,15 +672,15 @@ export default function App() {
           )}
         </div>
         {/* Floating bottom action toolbar */}
-        {selectedClient && (
+        {selectedClient && isInvoiceOpen && (
           <div className="absolute inset-x-0 bottom-5 z-20 pointer-events-none flex justify-center px-4">
-            <div className="pointer-events-auto w-fit bg-[rgba(218,225,214,0.68)] backdrop-blur-xl border border-[rgba(191,202,188,0.85)] shadow-[0_12px_30px_rgba(35,49,42,0.14)] rounded-[999px] px-2.5 py-2 flex items-center gap-2">
-              <button
-                className="h-10 border border-[rgba(178,191,176,0.95)] bg-[rgba(241,245,239,0.72)] rounded-[999px] px-6 text-[13px] font-medium tracking-[0.01em] text-[#24322d] hover:bg-[rgba(245,248,243,0.92)] transition-colors"
-                onClick={handleSave}
-              >
-                Save
-              </button>
+            <div
+              className="pointer-events-auto w-fit bg-[rgba(87,94,85,0.24)] border border-[rgba(255,255,255,0.24)] backdrop-blur-[38px] backdrop-saturate-[1.35] shadow-[0_12px_30px_rgba(35,49,42,0.14)] rounded-[999px] px-2.5 py-2 flex items-center gap-2"
+              style={{
+                backdropFilter: "blur(38px) saturate(1.35)",
+                WebkitBackdropFilter: "blur(38px) saturate(1.35)",
+              }}
+            >
               <button
                 className="h-10 border border-[rgba(178,191,176,0.95)] bg-[rgba(241,245,239,0.72)] rounded-[999px] px-6 text-[13px] font-medium tracking-[0.01em] text-[#4e5c56] hover:bg-[rgba(245,248,243,0.92)] hover:text-[#7b2f2f] transition-colors"
                 onClick={handleClearAllEntries}
@@ -257,7 +697,121 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
       </div>
+
+      {/* Clear all entries dialog */}
+      {clearEntriesConfirmOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(19,28,24,0.42)] px-4">
+          <div className="w-full max-w-md rounded-xl border border-[#d6ddd5] bg-[#f8faf6] p-4 shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
+            <h2 className="text-[15px] font-semibold text-[#1f2f28]">Clear All Entries</h2>
+            <p className="mt-1 text-[12px] text-[#5f6c65]">
+              This will remove all imported and manual entries from the current invoice.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg border border-[#d3ddd3] text-[12px] text-[#415049] hover:bg-[#eef3ef] transition-colors"
+                onClick={() => setClearEntriesConfirmOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg bg-[#8a2d2d] text-white text-[12px] font-medium hover:bg-[#6f2323] transition-colors"
+                onClick={handleConfirmClearAllEntries}
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <CompanySettingsModal
+        open={companySettingsOpen}
+        loading={companySettingsLoading}
+        saving={companySettingsSaving}
+        initialSettings={companySettings}
+        initialTogglToken={toggl.config.apiToken}
+        initialMinimaxApiKey={initialMinimaxApiKey}
+        onClose={() => setCompanySettingsOpen(false)}
+        onSave={handleSaveCompanySettings}
+      />
+
+      {/* Rename invoice dialog */}
+      {renameTarget && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(19,28,24,0.42)] px-4">
+          <div className="w-full max-w-md rounded-xl border border-[#d6ddd5] bg-[#f8faf6] p-4 shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
+            <h2 className="text-[15px] font-semibold text-[#1f2f28]">Rename Invoice</h2>
+            <p className="mt-1 text-[12px] text-[#5f6c65]">
+              This name is for internal reference only and will not appear on the invoice.
+            </p>
+            <form
+              className="mt-3 flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmRename();
+              }}
+            >
+              <input
+                className="h-10 rounded-lg border border-[#d7e0d5] bg-white px-3 text-[13px] text-[#22332b] outline-none focus:border-[#31566f]"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Invoice name"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="h-9 px-4 rounded-lg border border-[#d3ddd3] text-[12px] text-[#415049] hover:bg-[#eef3ef] transition-colors"
+                  onClick={() => setRenameTarget(null)}
+                  disabled={renamingInvoice}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="h-9 px-4 rounded-lg bg-[#31566f] text-white text-[12px] font-medium hover:bg-[#274a60] transition-colors disabled:opacity-60"
+                  disabled={renamingInvoice}
+                >
+                  {renamingInvoice ? "Saving..." : "Save name"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete invoice dialog */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(19,28,24,0.42)] px-4">
+          <div className="w-full max-w-md rounded-xl border border-[#d6ddd5] bg-[#f8faf6] p-4 shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
+            <h2 className="text-[15px] font-semibold text-[#1f2f28]">Delete Invoice</h2>
+            <p className="mt-1 text-[12px] text-[#5f6c65]">
+              Delete &ldquo;{getReferenceName(deleteTarget)}&rdquo;? This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg border border-[#d3ddd3] text-[12px] text-[#415049] hover:bg-[#eef3ef] transition-colors"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deletingInvoice}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg bg-[#8a2d2d] text-white text-[12px] font-medium hover:bg-[#6f2323] transition-colors disabled:opacity-60"
+                onClick={handleConfirmDelete}
+                disabled={deletingInvoice}
+              >
+                {deletingInvoice ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Client modal (create / edit) */}
       <ClientModal
@@ -275,18 +829,6 @@ export default function App() {
         editClient={editingClient}
       />
 
-      {/* Toggl settings modal */}
-      <TogglSettingsModal
-        open={togglModalOpen}
-        onClose={() => setTogglModalOpen(false)}
-        config={toggl.config}
-        updateConfig={toggl.updateConfig}
-        validating={toggl.validating}
-        tokenValid={toggl.tokenValid}
-        validateToken={toggl.validateToken}
-        togglClients={toggl.togglClients}
-        clients={clients}
-      />
     </div>
   );
 }

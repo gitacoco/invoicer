@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Font,
 } from "@react-pdf/renderer";
-import type { InvoiceData, Client } from "../types";
+import type { InvoiceData, Client, CompanySettings } from "../types";
 import {
   formatCurrency,
   formatDate,
@@ -16,6 +16,7 @@ import {
   servicePeriodStart,
   servicePeriodEnd,
 } from "../utils/format";
+import { resolveAssetUrl } from "../utils/assets";
 
 /* ── Register Inter font for vector PDF ── */
 
@@ -181,9 +182,22 @@ const s = StyleSheet.create({
 
   /* Footer */
   footer: { paddingHorizontal: 20, paddingTop: 12 },
-  footerRow: { flexDirection: "row" },
-  footerCol: { flex: 1, flexDirection: "column" },
-  companyName: { fontSize: 14, fontWeight: 700, marginBottom: 8 },
+  footerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  footerColLeft: { width: 200, flexDirection: "column" },
+  footerColRight: { width: 240, flexDirection: "column" },
+  companyLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+    marginBottom: 8,
+    objectFit: "cover",
+  },
+  companyNameWrap: { flexDirection: "column", marginBottom: 8 },
+  companyName: { fontSize: 14, fontWeight: 700, lineHeight: 1.2 },
   footerText: { fontSize: 10 },
   footerEmail: { fontSize: 10, color: COLORS.link, marginTop: 8 },
   footerMuted: { fontSize: 10, color: COLORS.muted },
@@ -212,6 +226,7 @@ const s = StyleSheet.create({
 interface Props {
   invoice: InvoiceData;
   client: Client;
+  companySettings: CompanySettings;
   totalHours: number;
   balanceDue: number;
 }
@@ -219,6 +234,7 @@ interface Props {
 export default function InvoicePDF({
   invoice,
   client,
+  companySettings,
   totalHours,
   balanceDue,
 }: Props) {
@@ -237,6 +253,11 @@ export default function InvoicePDF({
   const visibleItems = invoice.lineItems.filter(
     (item) => item.date || item.service || item.hours
   );
+  const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
+  const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
+  const companyNameLines = companySettings.companyName
+    .split("\n")
+    .filter((line) => line.trim());
 
   return (
     <Document>
@@ -262,8 +283,8 @@ export default function InvoicePDF({
               <View>
                 <Text style={s.sectionLabel}>Bill To</Text>
                 <View style={s.clientNameRow}>
-                  {client.logoDataUrl && (
-                    <Image src={client.logoDataUrl} style={s.clientLogo} />
+                  {clientLogoUrl && (
+                    <Image src={clientLogoUrl} style={s.clientLogo} />
                   )}
                   <Text style={s.clientName}>
                     {client.name || "Client Name"}
@@ -349,51 +370,68 @@ export default function InvoicePDF({
         <View style={s.footer}>
           <View style={s.footerRow}>
             {/* Company details */}
-            <View style={s.footerCol}>
-              <Text style={s.companyName}>
-                Example Studio{"\n"}LLC
-              </Text>
-              <Text style={s.footerText}>123 Example Street</Text>
-              <Text style={s.footerText}>San Francisco, CA 94105</Text>
-              <Text style={s.footerEmail}>
-                billing@example.com
-              </Text>
+            <View style={s.footerColLeft}>
+              {companyLogoUrl && (
+                <Image src={companyLogoUrl} style={s.companyLogo} />
+              )}
+              <View style={s.companyNameWrap}>
+                {(companyNameLines.length > 0
+                  ? companyNameLines
+                  : [companySettings.companyName]
+                ).map((line, idx) => (
+                  <Text key={`${line}-${idx}`} style={s.companyName}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+              {companySettings.companyAddress
+                .split("\n")
+                .filter((line) => line.trim())
+                .map((line, idx) => (
+                  <Text key={`${line}-${idx}`} style={s.footerText}>
+                    {line}
+                  </Text>
+                ))}
+              <Text style={s.footerEmail}>{companySettings.contactEmail}</Text>
               <View style={s.einRow}>
                 <Text style={s.footerMuted}>EIN </Text>
-                <Text style={s.footerText}>00-0000000</Text>
+                <Text style={s.footerText}>{companySettings.ein}</Text>
               </View>
             </View>
 
             {/* Payment instructions */}
-            <View style={s.footerCol}>
+            <View style={s.footerColRight}>
               <Text style={s.paymentTitle}>Payment Instructions</Text>
-              <Text style={s.paymentDesc}>
-                Use these details to send ACH transfers to Example Studio Design &
-                Consulting LLC's checking account.
-              </Text>
+              <Text style={s.paymentDesc}>{companySettings.guidanceLanguage}</Text>
               <View style={s.paymentGrid}>
                 <View style={s.paymentCol}>
                   <Text style={s.footerMuted}>Routing number</Text>
                   <Text style={[s.footerText, { fontWeight: 500 }]}>
-                    000000000
+                    {companySettings.routingNumber}
                   </Text>
                 </View>
                 <View style={s.paymentColWide}>
                   <Text style={s.footerMuted}>Account number</Text>
                   <Text style={[s.footerText, { fontWeight: 500 }]}>
-                    000000000000
+                    {companySettings.accountNumber}
                   </Text>
                 </View>
               </View>
               <View style={s.paymentGrid}>
                 <View style={s.paymentCol}>
                   <Text style={s.footerMuted}>Receiving bank</Text>
-                  <Text style={s.footerText}>Example Bank</Text>
+                  <Text style={s.footerText}>{companySettings.receivingBank}</Text>
                 </View>
                 <View style={s.paymentColWide}>
                   <Text style={s.footerMuted}>Bank address</Text>
-                  <Text style={s.footerText}>100 Bank Street</Text>
-                  <Text style={s.footerText}>San Francisco, CA 94105</Text>
+                  {companySettings.bankAddress
+                    .split("\n")
+                    .filter((line) => line.trim())
+                    .map((line, idx) => (
+                      <Text key={`${line}-${idx}`} style={s.footerText}>
+                        {line}
+                      </Text>
+                    ))}
                 </View>
               </View>
             </View>

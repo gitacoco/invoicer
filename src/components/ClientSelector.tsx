@@ -241,16 +241,22 @@ function ClientCard({
   onClick,
   onEdit,
   arrow,
+  compact = false,
+  showAddress = true,
 }: {
   client: Client;
   active?: boolean;
   onClick: () => void;
   onEdit?: (e: React.MouseEvent) => void;
   arrow?: "up" | "down";
+  compact?: boolean;
+  showAddress?: boolean;
 }) {
   return (
     <div
-      className={`flex items-center gap-3 border rounded-xl px-3 py-2 cursor-pointer transition-colors ${
+      className={`flex items-center gap-3 border cursor-pointer transition-colors ${
+        compact ? "rounded-lg p-2" : "rounded-xl px-3 py-2"
+      } ${
         active
           ? "bg-[#edf3ee] border-[#d2ddd2]"
           : "bg-white/90 border-[#dde7dd] hover:bg-[#f1f6f1]"
@@ -261,25 +267,27 @@ function ClientCard({
         <img
           src={client.logoDataUrl}
           alt=""
-          className="w-8 h-8 rounded-md object-cover shrink-0"
+          className={`${compact ? "w-5 h-5" : "w-8 h-8"} rounded-md object-cover shrink-0`}
         />
       ) : (
         <div
-          className="w-8 h-8 rounded-md shrink-0"
+          className={`${compact ? "w-5 h-5" : "w-8 h-8"} rounded-md shrink-0`}
           style={{ backgroundColor: client.themeColor }}
         />
       )}
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-dark truncate">
+        <div className={`${compact ? "text-[13px]" : "text-sm"} font-semibold text-dark truncate`}>
           {client.name}
         </div>
-        <div className="text-[11px] text-gray-400 truncate">
-          {client.address.split("\n")[0]}
-        </div>
+        {showAddress && (
+          <div className="text-[11px] text-gray-400 truncate">
+            {client.address.split("\n")[0]}
+          </div>
+        )}
       </div>
       {onEdit && (
         <button
-          className="text-[11px] text-[#7a8a80] hover:text-brand shrink-0 transition-colors"
+          className={`${compact ? "text-[10px]" : "text-[11px]"} text-[#7a8a80] hover:text-brand shrink-0 transition-colors`}
           onClick={onEdit}
         >
           Edit
@@ -302,6 +310,8 @@ interface PickerProps {
   onSelect: (client: Client) => void;
   onOpenCreate: () => void;
   onOpenEdit: (client: Client) => void;
+  compact?: boolean;
+  showAddress?: boolean;
 }
 
 export function ClientPicker({
@@ -310,6 +320,8 @@ export function ClientPicker({
   onSelect,
   onOpenCreate,
   onOpenEdit,
+  compact = false,
+  showAddress = true,
 }: PickerProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -332,7 +344,9 @@ export function ClientPicker({
   if (clients.length === 0) {
     return (
       <button
-        className="w-full border border-dashed border-[#d1ddd1] rounded-xl px-4 py-3 text-sm text-[#6e7d74] hover:border-brand hover:text-brand transition-colors"
+        className={`w-full border border-dashed border-[#d1ddd1] ${
+          compact ? "rounded-lg p-2 text-[12px]" : "rounded-xl px-4 py-3 text-sm"
+        } text-[#6e7d74] hover:border-brand hover:text-brand transition-colors`}
         onClick={onOpenCreate}
       >
         + Create your first client
@@ -347,6 +361,8 @@ export function ClientPicker({
         <ClientCard
           client={selectedClient}
           active={open}
+          compact={compact}
+          showAddress={showAddress}
           onClick={() => setOpen(!open)}
           onEdit={(e) => {
             e.stopPropagation();
@@ -356,10 +372,12 @@ export function ClientPicker({
         />
       ) : (
         <div
-          className="flex items-center justify-between bg-white/90 border border-[#dde7dd] rounded-xl px-3 py-2 cursor-pointer hover:bg-[#f1f6f1] transition-colors"
+          className={`flex items-center justify-between bg-white/90 border border-[#dde7dd] ${
+            compact ? "rounded-lg p-2" : "rounded-xl px-3 py-2"
+          } cursor-pointer hover:bg-[#f1f6f1] transition-colors`}
           onClick={() => setOpen(!open)}
         >
-          <span className="text-sm text-[#7a8a80]">Select a client...</span>
+          <span className={`${compact ? "text-[13px]" : "text-sm"} text-[#7a8a80]`}>Select a client...</span>
           <span className="text-[#7a8a80] text-[10px]">
             {open ? "\u25B2" : "\u25BC"}
           </span>
@@ -368,13 +386,15 @@ export function ClientPicker({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-20 left-0 right-0 mt-1 bg-white/95 border border-[#d7e1d7] rounded-xl shadow-[0_12px_26px_rgba(15,23,42,0.10)] overflow-hidden">
+        <div className={`absolute z-20 left-0 right-0 mt-1 bg-white/95 border border-[#d7e1d7] ${compact ? "rounded-lg" : "rounded-xl"} shadow-[0_12px_26px_rgba(15,23,42,0.10)] overflow-hidden`}>
           <div className="flex flex-col gap-1 p-2 max-h-[280px] overflow-y-auto">
             {clients.map((c) => (
               <ClientCard
                 key={c.id}
                 client={c}
                 active={selectedClient?.id === c.id}
+                compact={compact}
+                showAddress={showAddress}
                 onClick={() => {
                   onSelect(c);
                   setOpen(false);

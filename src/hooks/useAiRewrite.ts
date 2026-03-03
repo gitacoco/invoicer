@@ -3,6 +3,7 @@ export interface AiConfigPublic {
   hasApiKey: boolean;
   baseUrl: string;
   model: string;
+  apiKey?: string;
 }
 
 interface AiConfigResponse {
@@ -32,6 +33,15 @@ export async function fetchAiConfig(): Promise<AiConfigPublic> {
     throw new Error(payload?.error || "Failed to load AI config.");
   }
   return payload.config;
+}
+
+export async function fetchAiConfigSecret(): Promise<string> {
+  const res = await fetch("/__invoicer/ai-config?includeSecret=1");
+  const payload = await parseJsonSafe<AiConfigResponse>(res);
+  if (!res.ok || !payload?.ok || !payload.config) {
+    throw new Error(payload?.error || "Failed to load AI config.");
+  }
+  return payload.config.apiKey ?? "";
 }
 
 export async function saveAiConfig(apiKey: string): Promise<AiConfigPublic> {

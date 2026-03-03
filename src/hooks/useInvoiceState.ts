@@ -15,7 +15,7 @@ function normalizeLineItems(items: LineItem[]): LineItem[] {
   return items;
 }
 
-function getDefaultInvoice(
+export function createDefaultInvoice(
   clientId: string,
   serviceMonth?: string,
   serviceMonthEnd?: string
@@ -39,7 +39,7 @@ function getDefaultInvoice(
 
 export function useInvoiceState(clientId: string) {
   const [invoice, setInvoice] = useState<InvoiceData>(() =>
-    getDefaultInvoice(clientId)
+    createDefaultInvoice(clientId)
   );
 
   const updateField = useCallback(
@@ -86,7 +86,7 @@ export function useInvoiceState(clientId: string) {
   const resetInvoice = useCallback(
     (newClientId?: string, serviceMonth?: string, serviceMonthEnd?: string) => {
       setInvoice(
-        getDefaultInvoice(newClientId ?? clientId, serviceMonth, serviceMonthEnd)
+        createDefaultInvoice(newClientId ?? clientId, serviceMonth, serviceMonthEnd)
       );
     },
     [clientId]

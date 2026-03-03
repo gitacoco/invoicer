@@ -1,10 +1,11 @@
 import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "../components/InvoicePDF";
-import type { InvoiceData, Client } from "../types";
+import type { InvoiceData, Client, CompanySettings } from "../types";
 
 interface ExportProps {
   invoice: InvoiceData;
   client: Client;
+  companySettings: CompanySettings;
   totalHours: number;
   balanceDue: number;
 }

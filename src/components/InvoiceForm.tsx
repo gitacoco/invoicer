@@ -1,40 +1,29 @@
 import { useState } from "react";
-import type { InvoiceData, SavedInvoice, Client } from "../types";
-import { ClientPicker } from "./ClientSelector";
+import type { InvoiceData, TogglClient } from "../types";
 import type { AggregatedEntry } from "../hooks/useToggl";
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 interface Props {
   invoice: InvoiceData;
-  client: Client | null;
-  clients: Client[];
   updateField: <K extends keyof InvoiceData>(
     field: K,
     value: InvoiceData[K]
   ) => void;
-  onSelectClient: (client: Client) => void;
-  onOpenCreateClient: () => void;
-  onOpenEditClient: (client: Client) => void;
   onMonthSelect: (startMonth: string, endMonth?: string) => void;
-  savedInvoices: SavedInvoice[];
-  onLoad: (data: InvoiceData) => void;
-  onDelete: (key: string) => void;
   // Toggl integration
   togglConfigEnabled: boolean;
-  togglEnabled: boolean;
   togglFetching: boolean;
-  togglHasFetched: boolean;
+  togglClients: TogglClient[];
+  selectedTogglClientId?: number;
   togglPending: AggregatedEntry[];
   togglError?: string | null;
-  togglTokenValid: boolean | null;
-  togglValidating: boolean;
   importedTogglKeys: Set<string>;
   onTogglToggle: () => void;
+  onTogglClientChange: (togglClientId?: number) => void;
   onTogglSync: () => void;
   onTogglImportEntry: (entryKey: string) => void;
   onTogglImportAll: () => void;
-  onOpenTogglSettings: () => void;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -161,12 +150,12 @@ function MonthGrid({
             <button
               key={i}
               type="button"
-              className={`border rounded-[2px] py-1.5 text-[11px] font-medium transition-colors ${
+              className={`rounded-[6px] py-1.5 text-[11px] font-medium transition-colors ${
                 isBoundary
-                  ? "bg-[#2f5168] border-[#2f5168] text-white"
+                  ? "bg-[#2f5168] text-white"
                   : isWithinRange
-                    ? "bg-[#e7eef0] border-[#d2dde3] text-[#2e3f47]"
-                  : "bg-[#f8fbf7] border-[#dde7dd] text-[#68756e] hover:bg-[#eef4ee]"
+                    ? "bg-[#e7eef0] text-[#2e3f47]"
+                  : "bg-[#f8fbf7] text-[#4f5d55] hover:bg-[#eef4ee]"
               }`}
               onClick={handleSelect}
             >
@@ -181,78 +170,29 @@ function MonthGrid({
 
 export default function InvoiceForm({
   invoice,
-  client,
-  clients,
   updateField,
-  onSelectClient,
-  onOpenCreateClient,
-  onOpenEditClient,
   onMonthSelect,
-  savedInvoices,
-  onLoad,
-  onDelete,
   togglConfigEnabled,
-  togglEnabled,
   togglFetching,
-  togglHasFetched,
+  togglClients,
+  selectedTogglClientId,
   togglPending,
   togglError,
-  togglTokenValid,
-  togglValidating,
   importedTogglKeys,
   onTogglToggle,
+  onTogglClientChange,
   onTogglSync,
   onTogglImportEntry,
   onTogglImportAll,
-  onOpenTogglSettings,
 }: Props) {
   const unimportedCount = togglPending.filter(
     (entry) => !importedTogglKeys.has(entry.key)
   ).length;
-  const connectionLabel = !togglConfigEnabled
-    ? "Disabled"
-    : togglValidating
-      ? "Checking..."
-      : togglTokenValid === true
-        ? "Connected"
-        : togglTokenValid === false
-          ? "Invalid Token"
-          : "Not Connected";
-  const connectionTone = !togglConfigEnabled
-    ? "bg-[#eff3ef] text-[#738077]"
-    : togglValidating
-      ? "bg-[#f3efe3] text-[#8a6a2b]"
-      : togglTokenValid === true
-        ? "bg-[#e8f0ea] text-[#2f6a4b]"
-      : togglTokenValid === false
-          ? "bg-[#f5e8e6] text-[#8a2d2d]"
-          : "bg-[#eff3ef] text-[#738077]";
-  const infoMessage = !togglConfigEnabled
-    ? "Enable Toggl Track to fetch entries."
-    : togglConfigEnabled && togglTokenValid !== true && !togglValidating
-      ? "Open settings to connect your Toggl API token."
-      : togglEnabled && togglHasFetched && togglPending.length === 0 && !togglFetching
-        ? "No entries found in this service period."
-        : null;
+  const clientFilterDisabled =
+    !togglConfigEnabled || togglFetching || togglClients.length === 0;
 
   return (
     <div className="flex flex-col gap-5 p-5 h-full overflow-y-auto bg-[#f8faf6]">
-      <h2
-        className="text-[18px] font-semibold text-[#1f2f28]"
-        style={{ fontFamily: "var(--font-editorial)" }}
-      >
-        Invoice Builder
-      </h2>
-
-      {/* Client picker */}
-      <ClientPicker
-        clients={clients}
-        selectedClient={client}
-        onSelect={onSelectClient}
-        onOpenCreate={onOpenCreateClient}
-        onOpenEdit={onOpenEditClient}
-      />
-
       {/* Service period */}
       <CollapsibleSection label="Service Period">
         <MonthGrid
@@ -261,34 +201,6 @@ export default function InvoiceForm({
           onSelect={onMonthSelect}
         />
       </CollapsibleSection>
-
-      {/* Saved invoices */}
-      {savedInvoices.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <SectionLabel>Saved Invoices</SectionLabel>
-          <div className="flex flex-col border border-[#dce4da] bg-white/90 rounded-xl overflow-hidden">
-            {savedInvoices.map((s) => (
-              <div
-                key={s.key}
-                className="flex items-center justify-between border-b border-[#e8efe6] last:border-b-0 px-3 py-2 text-[12px]"
-              >
-                <button
-                  className="text-left text-[#24332c] hover:text-brand transition-colors flex-1 truncate"
-                  onClick={() => onLoad(s.data)}
-                >
-                  {s.label}
-                </button>
-                <button
-                  className="text-[#7e8a83] hover:text-[#8a2d2d] ml-2 text-[11px] transition-colors"
-                  onClick={() => onDelete(s.key)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Invoice details (collapsible) */}
       <CollapsibleSection label="Invoice Details">
@@ -330,93 +242,117 @@ export default function InvoiceForm({
               />
             </button>
             <span className="text-[11px] font-medium text-[#23352d]">Toggl Track</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${connectionTone}`}>
-              {connectionLabel}
-            </span>
+            <div
+              className={`ml-1 h-6 min-w-0 flex-1 inline-flex items-stretch rounded-md border overflow-hidden ${
+                clientFilterDisabled
+                  ? "border-[#e1e8e1] bg-[#eff3ef]"
+                  : "border-[#d7e0d5] bg-[#f8fbf8]"
+              }`}
+            >
+              <span className="pointer-events-none select-none inline-flex items-center px-2 text-[10px] text-[#6f7f75] border-r border-[#d7e0d5] bg-[#eef3ef]">
+                Client
+              </span>
+              <select
+                className="h-full min-w-0 flex-1 bg-transparent px-2 text-[11px] text-[#2f5168] outline-none disabled:text-[#95a29a]"
+                value={
+                  selectedTogglClientId == null ? "" : String(selectedTogglClientId)
+                }
+                onChange={(e) => {
+                  const value = e.target.value;
+                  onTogglClientChange(value ? Number(value) : undefined);
+                }}
+                disabled={clientFilterDisabled}
+                aria-label="Filter by Toggl client"
+                title="Filter by Toggl client before syncing"
+              >
+                <option value="">
+                  {togglClients.length === 0 ? "No Toggl clients" : "All clients"}
+                </option>
+                {togglClients.map((client) => (
+                  <option key={client.id} value={String(client.id)}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
-              className="ml-auto h-6 w-6 inline-flex items-center justify-center rounded-md border border-[#d7e0d5] text-[#7b8a82] hover:text-[#2f5168] hover:bg-[#eef4ee] transition-colors"
-              onClick={onOpenTogglSettings}
-              title="Toggl settings"
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md border border-[#d7e0d5] text-[#7b8a82] hover:text-[#2f5168] hover:bg-[#eef4ee] transition-colors disabled:bg-[#eff3ef] disabled:text-[#95a29a] disabled:border-[#e1e8e1] disabled:cursor-not-allowed"
+              disabled={!togglConfigEnabled || togglFetching}
+              onClick={onTogglSync}
+              title={togglFetching ? "Syncing..." : "Sync from Toggl"}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6.5 1.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75v.3a5.52 5.52 0 0 1 1.63.67l.21-.21a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1 0 1.06l-.21.21c.28.5.5 1.05.67 1.63h.3a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-.75.75h-.3a5.52 5.52 0 0 1-.67 1.63l.21.21a.75.75 0 0 1 0 1.06l-1.06 1.06a.75.75 0 0 1-1.06 0l-.21-.21a5.52 5.52 0 0 1-1.63.67v.3a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1-.75-.75v-.3a5.52 5.52 0 0 1-1.63-.67l-.21.21a.75.75 0 0 1-1.06 0L2.54 12.4a.75.75 0 0 1 0-1.06l.21-.21a5.52 5.52 0 0 1-.67-1.63h-.3a.75.75 0 0 1-.75-.75v-1.5a.75.75 0 0 1 .75-.75h.3c.17-.58.39-1.13.67-1.63l-.21-.21a.75.75 0 0 1 0-1.06L3.6 2.54a.75.75 0 0 1 1.06 0l.21.21A5.52 5.52 0 0 1 6.5 2.08v-.33ZM8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" fill="currentColor"/>
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.68-3.96" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                <path d="M13.5 3.5v3h-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              className="h-7 px-2 rounded-lg border border-[#d7e0d5] bg-[#f4f8f4] text-[#2f5168] text-[10px] font-medium hover:bg-[#e9f0e9] transition-colors disabled:bg-[#eff3ef] disabled:border-[#e1e8e1] disabled:text-[#95a29a] disabled:cursor-not-allowed"
-              disabled={!togglEnabled || togglFetching}
-              onClick={onTogglSync}
-            >
-              {togglFetching ? "Syncing..." : "Sync"}
-            </button>
-            <button
-              type="button"
-              className="h-7 px-2 rounded-lg bg-[#2f5168] text-white text-[10px] font-medium hover:bg-[#233e50] transition-colors disabled:bg-[#b8c3ba] disabled:cursor-not-allowed"
-              disabled={!togglEnabled || togglFetching || unimportedCount === 0}
-              onClick={onTogglImportAll}
-            >
-              Import all
-            </button>
-            <span className="ml-auto text-[10px] text-[#6f7f75]">
-              {togglPending.length} fetched / {unimportedCount} pending
-            </span>
-          </div>
+          {togglConfigEnabled && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-[#6f7f75]">
+                {togglPending.length} fetched / {unimportedCount} pending
+              </span>
+              <button
+                type="button"
+                className="h-6 px-2 rounded-md bg-transparent text-[#2f5168] text-[10px] font-medium hover:bg-[#e6eeea] transition-colors disabled:text-[#95a29a] disabled:bg-transparent disabled:cursor-not-allowed"
+                disabled={!togglConfigEnabled || togglFetching || unimportedCount === 0}
+                onClick={onTogglImportAll}
+              >
+                Import all
+              </button>
+            </div>
+          )}
 
           {togglError && (
             <div className="text-[10px] text-red-700 bg-[#f5e8e6] border border-[#e7c2bf] rounded-md px-2 py-0.5">
               {togglError}
             </div>
           )}
-
-          {infoMessage && (
-            <div className="text-[10px] text-[#6e7d74] bg-[#f2f6f1] border border-[#dde7dd] rounded-md px-2 py-0.5">
-              {infoMessage}
-            </div>
-          )}
         </div>
 
-        {togglEnabled && togglPending.length > 0 && (
-          <div className="flex flex-col gap-2">
+        {togglConfigEnabled && togglPending.length > 0 && (
+          <div className="border border-[#dde7dd] rounded-lg overflow-hidden bg-white/90">
             {togglPending.map((entry) => {
               const imported = importedTogglKeys.has(entry.key);
               return (
                 <div
                   key={entry.key}
-                  className="bg-white/90 border border-[#dde7dd] rounded-lg px-3 py-2 grid grid-cols-[96px_minmax(0,1fr)_56px_auto] items-center gap-2"
+                  className="flex items-stretch border-b border-[#e1e9e1] last:border-b-0"
                 >
-                  <div className="text-[11px] text-dark font-medium">
-                    {entry.date}
-                  </div>
+                  <div className="min-w-0 flex-1 grid grid-cols-[90px_minmax(0,1fr)_54px] items-center gap-1.5 px-3 py-2">
+                    <div className="text-[11px] text-[#1f2e28] font-medium">
+                      {entry.date}
+                    </div>
 
-                  <div
-                    className="text-[11px] text-gray-600 truncate"
-                    title={entry.descriptions.join(", ") || "No description"}
-                  >
-                    {entry.descriptions.join(", ") || "No description"}
-                  </div>
-
-                  <div className="text-[11px] text-gray-500 text-right">
-                    {entry.hours.toFixed(2)}h
-                  </div>
-
-                  {imported ? (
-                    <span className="text-[10px] px-2 py-1 bg-[#eef3ef] text-[#5e6c63] border border-[#d8e1d8] rounded-md justify-self-end whitespace-nowrap">
-                      Imported
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="text-[10px] px-2 py-1 bg-[#2f5168] text-white rounded-md hover:bg-[#233e50] transition-colors justify-self-end whitespace-nowrap"
-                      onClick={() => onTogglImportEntry(entry.key)}
+                    <div
+                      className="text-[11px] text-gray-600 truncate"
+                      title={entry.descriptions.join(", ") || "No description"}
                     >
-                      Import
-                    </button>
-                  )}
+                      {entry.descriptions.join(", ") || "No description"}
+                    </div>
+
+                    <div className="text-[11px] text-gray-500 text-right">
+                      {entry.hours.toFixed(2)}h
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 w-fit border-l border-[#dfe8de] px-2 py-2 flex items-center justify-center">
+                    {imported ? (
+                      <span className="inline-flex h-6 w-[9ch] items-center justify-center text-[10px] bg-[#eef3ef] text-[#5e6c63] border border-[#d8e1d8] rounded-md whitespace-nowrap">
+                        Imported
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-[9ch] items-center justify-center text-[10px] bg-[#2f5168] text-white rounded-md hover:bg-[#233e50] transition-colors whitespace-nowrap"
+                        onClick={() => onTogglImportEntry(entry.key)}
+                      >
+                        Import
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
