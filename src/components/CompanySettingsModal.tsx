@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import type { CompanySettings } from "../types";
+import {
+  DEFAULT_MINIMAX_MODEL,
+  MINIMAX_MODEL_OPTIONS,
+} from "../hooks/useAiRewrite";
 import { resolveAssetUrl } from "../utils/assets";
 
 interface SavePayload {
   settings: CompanySettings;
   togglApiToken: string;
   minimaxApiKey: string;
+  minimaxModel: string;
 }
 
 interface Props {
@@ -15,6 +20,7 @@ interface Props {
   initialSettings: CompanySettings;
   initialTogglToken: string;
   initialMinimaxApiKey: string;
+  initialMinimaxModel: string;
   onClose: () => void;
   onSave: (payload: SavePayload) => Promise<void>;
 }
@@ -122,12 +128,16 @@ export default function CompanySettingsModal({
   initialSettings,
   initialTogglToken,
   initialMinimaxApiKey,
+  initialMinimaxModel,
   onClose,
   onSave,
 }: Props) {
   const [settingsDraft, setSettingsDraft] = useState<CompanySettings>(initialSettings);
   const [togglTokenDraft, setTogglTokenDraft] = useState(initialTogglToken);
   const [minimaxDraft, setMinimaxDraft] = useState(initialMinimaxApiKey);
+  const [minimaxModelDraft, setMinimaxModelDraft] = useState(
+    initialMinimaxModel || DEFAULT_MINIMAX_MODEL
+  );
   const [showTogglApiKey, setShowTogglApiKey] = useState(false);
   const [showMinimaxApiKey, setShowMinimaxApiKey] = useState(false);
   const [activeSection, setActiveSection] = useState<(typeof SECTIONS)[number]["id"]>(
@@ -142,11 +152,18 @@ export default function CompanySettingsModal({
     setSettingsDraft(initialSettings);
     setTogglTokenDraft(initialTogglToken);
     setMinimaxDraft(initialMinimaxApiKey);
+    setMinimaxModelDraft(initialMinimaxModel || DEFAULT_MINIMAX_MODEL);
     setShowTogglApiKey(false);
     setShowMinimaxApiKey(false);
     setActiveSection("company-info");
     setError(null);
-  }, [open, initialSettings, initialTogglToken, initialMinimaxApiKey]);
+  }, [
+    open,
+    initialSettings,
+    initialTogglToken,
+    initialMinimaxApiKey,
+    initialMinimaxModel,
+  ]);
 
   if (!open) return null;
 
@@ -204,6 +221,7 @@ export default function CompanySettingsModal({
                 settings: settingsDraft,
                 togglApiToken: togglTokenDraft.trim(),
                 minimaxApiKey: minimaxDraft.trim(),
+                minimaxModel: minimaxModelDraft.trim() || DEFAULT_MINIMAX_MODEL,
               }).catch((err: unknown) => {
                 const message =
                   err instanceof Error ? err.message : "Failed to save settings.";
@@ -396,6 +414,20 @@ export default function CompanySettingsModal({
                       {showMinimaxApiKey ? <EyeOffIcon /> : <EyeIcon />}
                     </button>
                   </div>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] text-[#5f6c65]">MiniMax Model</span>
+                  <select
+                    className="h-10 rounded-lg border border-[#d7e0d5] bg-white px-3 text-[13px] text-[#1f2f28] outline-none focus:border-[#31566f]"
+                    value={minimaxModelDraft}
+                    onChange={(e) => setMinimaxModelDraft(e.target.value)}
+                  >
+                    {MINIMAX_MODEL_OPTIONS.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </section>
 

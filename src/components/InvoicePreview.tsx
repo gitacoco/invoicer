@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InvoiceData, Client, LineItem, CompanySettings } from "../types";
 import {
   fetchAiConfig,
@@ -46,6 +46,12 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error) return /abort/i.test(error.message);
+  return false;
+}
+
 function EyeIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
   return (
     <svg
@@ -84,6 +90,42 @@ function EyeOffIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
   );
 }
 
+function StopIcon({ className = "h-3 w-3" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function RetryIcon({ className = "h-2.5 w-2.5" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M21 3v6h-6" />
+      <path d="M20.5 14a8 8 0 1 1-2.2-8.5L21 9" />
+    </svg>
+  );
+}
+
 export default function InvoicePreview({
   invoice,
   client,
@@ -113,6 +155,7 @@ export default function InvoicePreview({
     null
   );
   const [showInlineAiKey, setShowInlineAiKey] = useState(false);
+  const rewriteAbortRef = useRef<AbortController | null>(null);
 
   const themeColor = client.themeColor || "#006b51";
   const paymentDueDate = computePaymentDueDate(
@@ -131,6 +174,13 @@ export default function InvoicePreview({
     .filter((line) => line.trim());
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
+
+  useEffect(() => {
+    return () => {
+      rewriteAbortRef.current?.abort();
+      rewriteAbortRef.current = null;
+    };
+  }, []);
 
   const setStartMonth = (nextStart: string) => {
     if (!updateField || !nextStart) return;
@@ -173,6 +223,11 @@ export default function InvoicePreview({
   };
 
   const handleAiRewrite = async (item: LineItem) => {
+    if (aiRewritingItemId === item.id) {
+      rewriteAbortRef.current?.abort();
+      return;
+    }
+
     const source = item.service.trim();
     if (!source) {
       setAiError("Please enter service text before rewriting.");
@@ -188,19 +243,31 @@ export default function InvoicePreview({
       return;
     }
     setShowAiKeyForItemId(null);
+    rewriteAbortRef.current?.abort();
+    const controller = new AbortController();
+    rewriteAbortRef.current = controller;
     setAiRewritingItemId(item.id);
     try {
-      const rewritten = await rewriteServiceText(source);
+      const rewritten = await rewriteServiceText(source, {
+        signal: controller.signal,
+      });
       setAiSuggestion({ itemId: item.id, text: rewritten });
     } catch (error) {
+      if (isAbortError(error)) {
+        return;
+      }
       setAiError(getErrorMessage(error, "AI rewrite failed."));
     } finally {
-      setAiRewritingItemId(null);
+      if (rewriteAbortRef.current === controller) {
+        rewriteAbortRef.current = null;
+      }
+      setAiRewritingItemId((prev) => (prev === item.id ? null : prev));
     }
   };
 
   const handleSaveAiKey = async (item: LineItem) => {
     const apiKey = aiKeyDraft.trim();
+    let controller: AbortController | null = null;
     if (!apiKey) {
       setAiError("API key cannot be empty.");
       return;
@@ -215,12 +282,23 @@ export default function InvoicePreview({
       setShowAiKeyForItemId(null);
       const source = item.service.trim();
       if (!source) return;
+      rewriteAbortRef.current?.abort();
+      controller = new AbortController();
+      rewriteAbortRef.current = controller;
       setAiRewritingItemId(item.id);
-      const rewritten = await rewriteServiceText(source);
+      const rewritten = await rewriteServiceText(source, {
+        signal: controller.signal,
+      });
       setAiSuggestion({ itemId: item.id, text: rewritten });
     } catch (error) {
-      setAiError(getErrorMessage(error, "Failed to save API key."));
+      if (isAbortError(error)) {
+        return;
+      }
+      setAiError(getErrorMessage(error, "AI rewrite failed."));
     } finally {
+      if (controller && rewriteAbortRef.current === controller) {
+        rewriteAbortRef.current = null;
+      }
       setAiRewritingItemId(null);
       setAiSavingKey(false);
     }
@@ -401,15 +479,14 @@ export default function InvoicePreview({
               const showApiKeyPrompt = showAiKeyForItemId === item.id;
               const suggestionForItem =
                 aiSuggestion?.itemId === item.id ? aiSuggestion.text : null;
-              const needsExtraRoom =
-                isServiceEditing && (showApiKeyPrompt || suggestionForItem || aiError);
+              const hasAiPanel = Boolean(
+                showApiKeyPrompt || suggestionForItem || aiError
+              );
 
               return (
                 <div
                   key={item.id}
-                  className={`relative grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-start text-[11px] group ${
-                    needsExtraRoom ? "pb-24" : ""
-                  }`}
+                  className="relative grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-start text-[11px] group"
                 >
                   {editingKey === `li-${item.id}-date` ? (
                     <input
@@ -441,7 +518,11 @@ export default function InvoicePreview({
                     <div className="relative min-w-0" data-ai-editor={item.id}>
                       <input
                         autoFocus
-                        className="w-full text-muted border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand min-w-0"
+                        className={`w-full text-muted rounded px-1 py-0.5 outline-none min-w-0 ${
+                          isRewriting
+                            ? "ai-rewrite-input--rewriting"
+                            : "border border-gray-200 bg-white focus:border-brand"
+                        }`}
                         value={item.service}
                         onChange={(e) =>
                           updateLineItem?.(item.id, "service", e.target.value)
@@ -463,25 +544,32 @@ export default function InvoicePreview({
                           }
                         }}
                       />
-                      <div className="absolute left-0 top-full mt-1 z-10">
-                        <button
-                          type="button"
-                          className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors disabled:opacity-60"
-                          onClick={() => {
-                            void handleAiRewrite(item);
-                          }}
-                          disabled={isRewriting || aiSavingKey || aiConfigLoading}
-                        >
-                          {isRewriting
-                            ? "Rewriting..."
-                            : aiConfigLoading
-                            ? "Loading..."
-                            : "AI Rewrite"}
-                        </button>
-                      </div>
+                      {!hasAiPanel && (
+                        <div className="absolute left-0 top-full mt-1 z-10">
+                          <button
+                            type="button"
+                            className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors inline-flex items-center gap-1"
+                            onClick={() => {
+                              void handleAiRewrite(item);
+                            }}
+                            disabled={!isRewriting && (aiSavingKey || aiConfigLoading)}
+                          >
+                            {isRewriting ? (
+                              <>
+                                <StopIcon className="h-2.5 w-2.5" />
+                                Rewriting
+                              </>
+                            ) : aiConfigLoading ? (
+                              "Loading..."
+                            ) : (
+                              "AI Rewrite"
+                            )}
+                          </button>
+                        </div>
+                      )}
 
-                      {(showApiKeyPrompt || suggestionForItem || aiError) && (
-                        <div className="absolute left-0 top-full mt-8 z-20 w-[340px] border border-[#dbe3d8] bg-white rounded-md p-2 shadow-sm">
+                      {hasAiPanel && (
+                        <div className="absolute left-0 right-0 top-full mt-1 z-20 border border-[#dbe3d8] bg-white/92 backdrop-blur-[2px] rounded-md p-2 shadow-[0_12px_28px_rgba(20,35,30,0.18),0_3px_10px_rgba(20,35,30,0.1)]">
                           {showApiKeyPrompt && (
                             <div className="flex flex-col gap-2">
                               <div className="text-[10px] text-[#5d6761]">
@@ -521,37 +609,53 @@ export default function InvoicePreview({
 
                           {suggestionForItem && (
                             <div className="flex flex-col gap-2">
-                              <div className="text-[10px] text-[#1f2a27]">
+                              <div className="text-[12px] text-[#1f2a27]">
                                 {suggestionForItem}
                               </div>
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-between gap-2">
                                 <button
                                   type="button"
                                   className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] text-[#5d6761] hover:bg-[#f2f5f1] transition-colors"
-                                  onClick={() => setAiSuggestion(null)}
+                                  onClick={() => {
+                                    setAiSuggestion(null);
+                                    setAiError(null);
+                                  }}
                                 >
                                   Cancel
                                 </button>
-                                <button
-                                  type="button"
-                                  className="h-6 px-2 rounded-md text-[10px] font-medium bg-[#2f5168] text-white hover:bg-[#233e50] transition-colors"
-                                  onClick={() => {
-                                    updateLineItem?.(
-                                      item.id,
-                                      "service",
-                                      suggestionForItem
-                                    );
-                                    setAiSuggestion(null);
-                                  }}
-                                >
-                                  Replace
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] text-[#5d6761] hover:bg-[#f2f5f1] transition-colors disabled:opacity-60 inline-flex items-center gap-1"
+                                    onClick={() => {
+                                      void handleAiRewrite(item);
+                                    }}
+                                    disabled={isRewriting || aiSavingKey || aiConfigLoading}
+                                  >
+                                    <RetryIcon />
+                                    {isRewriting ? "Trying..." : "Try again"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="h-6 px-2 rounded-md text-[10px] font-medium bg-[#2f5168] text-white hover:bg-[#233e50] transition-colors"
+                                    onClick={() => {
+                                      updateLineItem?.(
+                                        item.id,
+                                        "service",
+                                        suggestionForItem
+                                      );
+                                      setAiSuggestion(null);
+                                    }}
+                                  >
+                                    Replace
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
 
                           {aiError && (
-                            <div className="text-[10px] text-[#a22f2f] mt-2">
+                            <div className="text-[12px] text-[#a22f2f] mt-2">
                               {aiError}
                             </div>
                           )}
@@ -671,7 +775,7 @@ export default function InvoicePreview({
         <div className="flex w-full items-start justify-between">
           {/* Company details */}
           <div className="w-[200px] shrink-0 flex flex-col gap-2">
-            <div className="flex items-start gap-2">
+            <div className="flex items-start gap-2 mb-4">
               {companyLogoUrl && (
                 <img
                   src={companyLogoUrl}
@@ -700,14 +804,14 @@ export default function InvoicePreview({
                 ))}
             </div>
             <span className="text-[10px] text-link">{companySettings.contactEmail}</span>
-            <div className="flex gap-1 text-[10px]">
+            <div className="flex flex-col gap-0.5 text-[10px]">
               <span className="text-muted">EIN</span>
               <span className="text-dark">{companySettings.ein}</span>
             </div>
           </div>
 
           {/* Payment instructions */}
-          <div className="w-[240px] shrink-0 flex flex-col gap-2">
+          <div className="w-[260px] shrink-0 flex flex-col gap-2">
             <span className="text-[12px] font-semibold text-dark">
               Payment Instructions
             </span>

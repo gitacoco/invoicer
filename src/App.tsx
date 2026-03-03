@@ -1,9 +1,21 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  type DragEvent,
+} from "react";
 import { ClientModal, ClientPicker } from "./components/ClientSelector";
 import CompanySettingsModal from "./components/CompanySettingsModal";
 import InvoiceForm from "./components/InvoiceForm";
 import InvoicePreview from "./components/InvoicePreview";
-import { fetchAiConfigSecret, saveAiConfig } from "./hooks/useAiRewrite";
+import {
+  DEFAULT_MINIMAX_MODEL,
+  fetchAiConfig,
+  fetchAiConfigSecret,
+  saveAiConfig,
+} from "./hooks/useAiRewrite";
 import { useCompanySettings } from "./hooks/useCompanySettings";
 import { createDefaultInvoice, useInvoiceState } from "./hooks/useInvoiceState";
 import { useClients } from "./hooks/useClients";
@@ -85,6 +97,9 @@ export default function App() {
   const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
   const [companySettingsSaving, setCompanySettingsSaving] = useState(false);
   const [initialMinimaxApiKey, setInitialMinimaxApiKey] = useState("");
+  const [initialMinimaxModel, setInitialMinimaxModel] = useState(
+    DEFAULT_MINIMAX_MODEL
+  );
   const [clearEntriesConfirmOpen, setClearEntriesConfirmOpen] = useState(false);
   const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(null);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
@@ -95,6 +110,8 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<InvoiceRecord | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<InvoiceRecord | null>(null);
+  const [draggingInvoiceId, setDraggingInvoiceId] = useState<string | null>(null);
+  const [dragOverInvoiceId, setDragOverInvoiceId] = useState<string | null>(null);
   const lastSavedSnapshotRef = useRef("");
   const autoSaveSeqRef = useRef(0);
 
@@ -128,6 +145,7 @@ export default function App() {
     updateInvoice,
     deleteInvoice: deleteStoredInvoice,
     renameInvoice,
+    reorderInvoices,
   } = useInvoices(selectedClient?.id ?? null);
 
   const toggl = useToggl();
@@ -371,14 +389,69 @@ export default function App() {
     selectedClient,
   ]);
 
+  const handleInvoiceDragStart = useCallback(
+    (event: DragEvent<HTMLDivElement>, id: string) => {
+      if (invoices.length <= 1) return;
+      setDraggingInvoiceId(id);
+      setDragOverInvoiceId(id);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", id);
+    },
+    [invoices.length]
+  );
+
+  const handleInvoiceDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const handleInvoiceDrop = useCallback(
+    (targetId: string) => {
+      if (!draggingInvoiceId || draggingInvoiceId === targetId) {
+        setDraggingInvoiceId(null);
+        setDragOverInvoiceId(null);
+        return;
+      }
+      const orderedIds = invoices.map((inv) => inv.id);
+      const from = orderedIds.indexOf(draggingInvoiceId);
+      const to = orderedIds.indexOf(targetId);
+      if (from < 0 || to < 0) {
+        setDraggingInvoiceId(null);
+        setDragOverInvoiceId(null);
+        return;
+      }
+      const nextOrder = [...orderedIds];
+      const [movedId] = nextOrder.splice(from, 1);
+      nextOrder.splice(to, 0, movedId);
+      setDraggingInvoiceId(null);
+      setDragOverInvoiceId(null);
+      void reorderInvoices(nextOrder).catch((error) => {
+        const message =
+          error instanceof Error ? error.message : "Failed to reorder invoices.";
+        window.alert(message);
+      });
+    },
+    [draggingInvoiceId, invoices, reorderInvoices]
+  );
+
+  const handleInvoiceDragEnd = useCallback(() => {
+    setDraggingInvoiceId(null);
+    setDragOverInvoiceId(null);
+  }, []);
+
   const openCompanySettings = useCallback(() => {
     setCompanySettingsOpen(true);
     void (async () => {
       try {
-        const apiKey = await fetchAiConfigSecret();
+        const [apiKey, aiConfig] = await Promise.all([
+          fetchAiConfigSecret(),
+          fetchAiConfig(),
+        ]);
         setInitialMinimaxApiKey(apiKey);
+        setInitialMinimaxModel(aiConfig.model || DEFAULT_MINIMAX_MODEL);
       } catch {
         setInitialMinimaxApiKey("");
+        setInitialMinimaxModel(DEFAULT_MINIMAX_MODEL);
       }
     })();
   }, []);
@@ -388,10 +461,12 @@ export default function App() {
       settings,
       togglApiToken,
       minimaxApiKey,
+      minimaxModel,
     }: {
       settings: CompanySettings;
       togglApiToken: string;
       minimaxApiKey: string;
+      minimaxModel: string;
     }) => {
       setCompanySettingsSaving(true);
       try {
@@ -404,11 +479,17 @@ export default function App() {
           }
         }
 
-        if (minimaxApiKey) {
-          if (minimaxApiKey !== initialMinimaxApiKey) {
-            await saveAiConfig(minimaxApiKey);
-            setInitialMinimaxApiKey(minimaxApiKey);
+        const nextApiKey = minimaxApiKey.trim();
+        const nextModel = minimaxModel.trim() || DEFAULT_MINIMAX_MODEL;
+        const aiChanged =
+          nextApiKey !== initialMinimaxApiKey || nextModel !== initialMinimaxModel;
+        if (aiChanged) {
+          if (!nextApiKey) {
+            throw new Error("MiniMax API key is required.");
           }
+          const saved = await saveAiConfig(nextApiKey, { model: nextModel });
+          setInitialMinimaxApiKey(nextApiKey);
+          setInitialMinimaxModel(saved.model || nextModel);
         }
 
         setCompanySettingsOpen(false);
@@ -416,7 +497,12 @@ export default function App() {
         setCompanySettingsSaving(false);
       }
     },
-    [initialMinimaxApiKey, saveCompanySettings, toggl]
+    [
+      initialMinimaxApiKey,
+      initialMinimaxModel,
+      saveCompanySettings,
+      toggl,
+    ]
   );
 
   useEffect(() => {
@@ -543,7 +629,19 @@ export default function App() {
                         isActive
                           ? "bg-[#eef3f0] border-[#d6e1d8]"
                           : "bg-white/90 border-[#dce4da] hover:bg-[#f4f8f4]"
+                      } ${
+                        dragOverInvoiceId === inv.id && draggingInvoiceId !== inv.id
+                          ? "border-[#8ea59a]"
+                          : ""
                       }`}
+                      draggable={invoices.length > 1}
+                      onDragStart={(event) => handleInvoiceDragStart(event, inv.id)}
+                      onDragOver={handleInvoiceDragOver}
+                      onDragEnter={() => {
+                        if (draggingInvoiceId) setDragOverInvoiceId(inv.id);
+                      }}
+                      onDrop={() => handleInvoiceDrop(inv.id)}
+                      onDragEnd={handleInvoiceDragEnd}
                     >
                       <button
                         type="button"
@@ -557,7 +655,13 @@ export default function App() {
                           {inv.updatedAt.slice(0, 10)}
                         </div>
                       </button>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                      <div
+                        className={`flex items-center gap-1 transition-opacity ${
+                          isActive
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                        }`}
+                      >
                         <button
                           type="button"
                           className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#e8eeeb] hover:text-[#254a63] transition-colors"
@@ -620,7 +724,7 @@ export default function App() {
         <div className="flex-1 flex flex-col overflow-hidden relative bg-[#e6e6e6]">
           <div className="flex-1 overflow-auto p-8 flex flex-col items-center bg-[#f0f0f0]">
           {selectedClient && isInvoiceOpen && (
-            <div className="w-[595px] mb-2 flex justify-center">
+            <div className="w-[595px] mb-4 flex justify-center">
               <div
                 className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] border ${
                   invoiceSaveStatus === "saving"
@@ -735,6 +839,7 @@ export default function App() {
         initialSettings={companySettings}
         initialTogglToken={toggl.config.apiToken}
         initialMinimaxApiKey={initialMinimaxApiKey}
+        initialMinimaxModel={initialMinimaxModel}
         onClose={() => setCompanySettingsOpen(false)}
         onSave={handleSaveCompanySettings}
       />

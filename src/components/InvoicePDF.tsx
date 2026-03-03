@@ -188,15 +188,20 @@ const s = StyleSheet.create({
     alignItems: "flex-start",
   },
   footerColLeft: { width: 200, flexDirection: "column" },
-  footerColRight: { width: 240, flexDirection: "column" },
+  footerColRight: { width: 260, flexDirection: "column" },
+  companyHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
   companyLogo: {
-    width: 40,
-    height: 40,
+    width: 34,
+    height: 34,
     borderRadius: 4,
-    marginBottom: 8,
+    marginRight: 6,
     objectFit: "cover",
   },
-  companyNameWrap: { flexDirection: "column", marginBottom: 8 },
+  companyNameWrap: { flexDirection: "column" },
   companyName: { fontSize: 14, fontWeight: 700, lineHeight: 1.2 },
   footerText: { fontSize: 10 },
   footerEmail: { fontSize: 10, color: COLORS.link, marginTop: 8 },
@@ -218,7 +223,7 @@ const s = StyleSheet.create({
     marginRight: 36,
   },
   paymentColWide: { flexDirection: "column" },
-  einRow: { flexDirection: "row", marginTop: 8 },
+  einRow: { flexDirection: "column", marginTop: 8 },
 });
 
 /* ── Component ── */
@@ -256,6 +261,7 @@ export default function InvoicePDF({
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
   const companyNameLines = companySettings.companyName
+    .replace(/Example Studio(?!\n)/, "Example Studio\n")
     .split("\n")
     .filter((line) => line.trim());
 
@@ -371,18 +377,20 @@ export default function InvoicePDF({
           <View style={s.footerRow}>
             {/* Company details */}
             <View style={s.footerColLeft}>
-              {companyLogoUrl && (
-                <Image src={companyLogoUrl} style={s.companyLogo} />
-              )}
-              <View style={s.companyNameWrap}>
-                {(companyNameLines.length > 0
-                  ? companyNameLines
-                  : [companySettings.companyName]
-                ).map((line, idx) => (
-                  <Text key={`${line}-${idx}`} style={s.companyName}>
-                    {line}
-                  </Text>
-                ))}
+              <View style={s.companyHeaderRow}>
+                {companyLogoUrl && (
+                  <Image src={companyLogoUrl} style={s.companyLogo} />
+                )}
+                <View style={s.companyNameWrap}>
+                  {(companyNameLines.length > 0
+                    ? companyNameLines
+                    : [companySettings.companyName]
+                  ).map((line, idx) => (
+                    <Text key={`${line}-${idx}`} style={s.companyName}>
+                      {line}
+                    </Text>
+                  ))}
+                </View>
               </View>
               {companySettings.companyAddress
                 .split("\n")
@@ -394,7 +402,7 @@ export default function InvoicePDF({
                 ))}
               <Text style={s.footerEmail}>{companySettings.contactEmail}</Text>
               <View style={s.einRow}>
-                <Text style={s.footerMuted}>EIN </Text>
+                <Text style={s.footerMuted}>EIN</Text>
                 <Text style={s.footerText}>{companySettings.ein}</Text>
               </View>
             </View>

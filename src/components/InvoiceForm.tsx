@@ -71,7 +71,7 @@ function Input({
     <label className="flex flex-col gap-1">
       <span className="text-[11px] text-gray-500">{label}</span>
       <input
-        className="border border-[#d7e0d5] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-brand focus:ring-0 transition-colors bg-white"
+        className="h-8 border border-[#d7e0d5] rounded-lg px-3 text-[13px] outline-none focus:border-brand focus:ring-0 transition-colors bg-white"
         {...props}
       />
     </label>

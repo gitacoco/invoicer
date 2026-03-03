@@ -6,6 +6,15 @@ export interface AiConfigPublic {
   apiKey?: string;
 }
 
+export const DEFAULT_MINIMAX_MODEL = "MiniMax-M2.1-highspeed";
+export const MINIMAX_MODEL_OPTIONS = [
+  "MiniMax-M2.1-highspeed",
+  "MiniMax-M2.1",
+  "MiniMax-M2.5-highspeed",
+  "MiniMax-M2.5",
+  "MiniMax-M2",
+] as const;
+
 interface AiConfigResponse {
   ok: boolean;
   config?: AiConfigPublic;
@@ -44,11 +53,18 @@ export async function fetchAiConfigSecret(): Promise<string> {
   return payload.config.apiKey ?? "";
 }
 
-export async function saveAiConfig(apiKey: string): Promise<AiConfigPublic> {
+export async function saveAiConfig(
+  apiKey: string,
+  options?: { model?: string }
+): Promise<AiConfigPublic> {
   const res = await fetch("/__invoicer/ai-config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: "minimax", apiKey }),
+    body: JSON.stringify({
+      provider: "minimax",
+      apiKey,
+      ...(options?.model ? { model: options.model } : {}),
+    }),
   });
   const payload = await parseJsonSafe<AiConfigResponse>(res);
   if (!res.ok || !payload?.ok || !payload.config) {
@@ -57,11 +73,15 @@ export async function saveAiConfig(apiKey: string): Promise<AiConfigPublic> {
   return payload.config;
 }
 
-export async function rewriteServiceText(text: string): Promise<string> {
+export async function rewriteServiceText(
+  text: string,
+  options?: { signal?: AbortSignal }
+): Promise<string> {
   const res = await fetch("/__invoicer/ai-rewrite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
+    signal: options?.signal,
   });
   const payload = await parseJsonSafe<RewriteResponse>(res);
   if (!res.ok || !payload?.ok || !payload.rewrittenText) {

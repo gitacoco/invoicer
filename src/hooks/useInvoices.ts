@@ -19,6 +19,12 @@ interface RenameInvoiceResponse {
   error?: string;
 }
 
+interface ReorderInvoicesResponse {
+  ok: boolean;
+  invoices?: InvoiceRecord[];
+  error?: string;
+}
+
 async function parseJsonSafe<T>(res: Response): Promise<T | null> {
   try {
     return (await res.json()) as T;
@@ -85,11 +91,7 @@ export function useInvoices(clientId: string | null) {
         throw new Error(payload?.error || "Failed to update invoice.");
       }
       const updated = payload.invoice;
-      setInvoices((prev) => {
-        const next = prev.map((i) => (i.id === id ? updated : i));
-        next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return next;
-      });
+      setInvoices((prev) => prev.map((i) => (i.id === id ? updated : i)));
       return updated;
     },
     []
@@ -121,14 +123,28 @@ export function useInvoices(clientId: string | null) {
         throw new Error(payload?.error || "Failed to rename invoice.");
       }
       const updated = payload.invoice;
-      setInvoices((prev) => {
-        const next = prev.map((i) => (i.id === id ? updated : i));
-        next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return next;
-      });
+      setInvoices((prev) => prev.map((i) => (i.id === id ? updated : i)));
       return updated;
     },
     []
+  );
+
+  const reorderInvoices = useCallback(
+    async (orderedIds: string[]): Promise<InvoiceRecord[]> => {
+      if (!clientId) return invoices;
+      const res = await fetch("/__invoicer/invoices/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, orderedIds }),
+      });
+      const payload = await parseJsonSafe<ReorderInvoicesResponse>(res);
+      if (!res.ok || !payload?.ok || !Array.isArray(payload.invoices)) {
+        throw new Error(payload?.error || "Failed to reorder invoices.");
+      }
+      setInvoices(payload.invoices);
+      return payload.invoices;
+    },
+    [clientId, invoices]
   );
 
   return {
@@ -139,5 +155,6 @@ export function useInvoices(clientId: string | null) {
     updateInvoice,
     deleteInvoice,
     renameInvoice,
+    reorderInvoices,
   };
 }

@@ -12,7 +12,16 @@ const COMPANY_SETTINGS_FILE = path.join(
   "company-settings.json"
 );
 const DEFAULT_AI_BASE_URL = "https://api.minimax.io/v1";
-const DEFAULT_AI_MODEL = "MiniMax-M2.5";
+const DEFAULT_AI_MODEL = "MiniMax-M2.1-highspeed";
+const MINIMAX_MODEL_FALLBACK_ORDER = [
+  "MiniMax-M2.1",
+  "MiniMax-M2.5-highspeed",
+  "MiniMax-M2.5",
+  "MiniMax-M2",
+] as const;
+const REWRITE_MAX_COMPLETION_TOKENS = 320;
+const REWRITE_RETRY_MAX_COMPLETION_TOKENS = 800;
+const REWRITE_FINAL_MAX_COMPLETION_TOKENS = 1200;
 
 interface LocalAiConfig {
   provider: "minimax";
@@ -196,8 +205,69 @@ function normalizeCompanySettings(raw: unknown): StoredCompanySettings {
   };
 }
 
-function sortInvoicesDesc(invoices: StoredInvoiceRecord[]): StoredInvoiceRecord[] {
-  return [...invoices].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+function invoicesForClientInDisplayOrder(
+  invoices: StoredInvoiceRecord[],
+  clientId?: string | null
+): StoredInvoiceRecord[] {
+  return clientId
+    ? invoices.filter((inv) => inv.clientId === clientId)
+    : [...invoices];
+}
+
+function insertInvoiceAtClientTop(
+  invoices: StoredInvoiceRecord[],
+  record: StoredInvoiceRecord
+): StoredInvoiceRecord[] {
+  const next = [...invoices];
+  const firstClientIndex = next.findIndex(
+    (inv) => inv.clientId === record.clientId
+  );
+  if (firstClientIndex < 0) {
+    next.unshift(record);
+    return next;
+  }
+  next.splice(firstClientIndex, 0, record);
+  return next;
+}
+
+function reorderClientInvoices(
+  invoices: StoredInvoiceRecord[],
+  clientId: string,
+  orderedIds: string[]
+): {
+  nextInvoices: StoredInvoiceRecord[];
+  clientInvoices: StoredInvoiceRecord[];
+} {
+  const existingClientInvoices = invoices.filter((inv) => inv.clientId === clientId);
+  const byId = new Map(existingClientInvoices.map((inv) => [inv.id, inv] as const));
+  const seen = new Set<string>();
+  const normalizedOrder: string[] = [];
+
+  for (const id of orderedIds) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    normalizedOrder.push(id);
+  }
+
+  const reorderedClientInvoices = [
+    ...normalizedOrder
+      .map((id) => byId.get(id))
+      .filter((inv): inv is StoredInvoiceRecord => Boolean(inv)),
+    ...existingClientInvoices.filter((inv) => !seen.has(inv.id)),
+  ];
+
+  const nextInvoices = [...invoices];
+  let clientCursor = 0;
+  for (let i = 0; i < nextInvoices.length; i += 1) {
+    if (nextInvoices[i].clientId !== clientId) continue;
+    nextInvoices[i] = reorderedClientInvoices[clientCursor];
+    clientCursor += 1;
+  }
+
+  return {
+    nextInvoices,
+    clientInvoices: reorderedClientInvoices,
+  };
 }
 
 function normalizeText(value: unknown, fallback: string): string {
@@ -350,74 +420,167 @@ function formatUpstreamError(
 
 function extractAssistantText(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
-  const obj = payload as {
-    choices?: Array<{
-      message?: {
-        content?: unknown;
-        text?: unknown;
-      };
-    }>;
+  const obj = payload as Record<string, unknown>;
+  const asTrimmed = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed || null;
   };
-  const message = obj.choices?.[0]?.message;
-  const content = message?.content;
-  if (typeof content === "string") {
-    const trimmed = content.trim();
-    return trimmed || null;
-  }
-  if (content && typeof content === "object") {
-    const text = (content as Record<string, unknown>).text;
-    if (typeof text === "string") {
-      const trimmed = text.trim();
-      return trimmed || null;
+
+  const isReasoningRecord = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    const record = value as Record<string, unknown>;
+    const type = asTrimmed(record.type)?.toLowerCase() ?? "";
+    const role = asTrimmed(record.role)?.toLowerCase() ?? "";
+    return (
+      type.includes("reason") ||
+      type.includes("think") ||
+      role.includes("reason") ||
+      "reasoning_content" in record ||
+      "thinking" in record
+    );
+  };
+
+  const fromContent = (content: unknown): string | null => {
+    const direct = asTrimmed(content);
+    if (direct) return direct;
+    if (Array.isArray(content)) {
+      const joined = content
+        .map((part) => {
+          if (typeof part === "string") return part;
+          if (part && typeof part === "object") {
+            const record = part as Record<string, unknown>;
+            if (isReasoningRecord(record)) return "";
+            return (
+              asTrimmed(record.output_text) ||
+              asTrimmed(record.text) ||
+              asTrimmed(record.content) ||
+              ""
+            );
+          }
+          return "";
+        })
+        .join("")
+        .trim();
+      return joined || null;
     }
+    if (content && typeof content === "object") {
+      const record = content as Record<string, unknown>;
+      if (isReasoningRecord(record)) return null;
+      return (
+        asTrimmed(record.output_text) ||
+        asTrimmed(record.text) ||
+        asTrimmed(record.content)
+      );
+    }
+    return null;
+  };
+
+  const firstChoice = Array.isArray(obj.choices) ? obj.choices[0] : undefined;
+  const firstChoiceRecord =
+    firstChoice && typeof firstChoice === "object"
+      ? (firstChoice as Record<string, unknown>)
+      : null;
+  const message =
+    firstChoiceRecord?.message && typeof firstChoiceRecord.message === "object"
+      ? (firstChoiceRecord.message as Record<string, unknown>)
+      : null;
+
+  const candidates: Array<string | null> = [
+    fromContent(message?.content),
+    asTrimmed(message?.text),
+    asTrimmed(firstChoiceRecord?.text),
+    fromContent(firstChoiceRecord?.content),
+    asTrimmed(obj.output_text),
+    asTrimmed(obj.reply),
+    asTrimmed(obj.text),
+  ];
+
+  const dataObj =
+    obj.data && typeof obj.data === "object"
+      ? (obj.data as Record<string, unknown>)
+      : null;
+  if (dataObj) {
+    const nestedChoice = Array.isArray(dataObj.choices) ? dataObj.choices[0] : undefined;
+    const nestedChoiceRecord =
+      nestedChoice && typeof nestedChoice === "object"
+        ? (nestedChoice as Record<string, unknown>)
+        : null;
+    const nestedMessage =
+      nestedChoiceRecord?.message &&
+      typeof nestedChoiceRecord.message === "object"
+        ? (nestedChoiceRecord.message as Record<string, unknown>)
+        : null;
+    candidates.push(fromContent(nestedMessage?.content));
+    candidates.push(asTrimmed(nestedMessage?.text));
+    candidates.push(asTrimmed(nestedChoiceRecord?.text));
+    candidates.push(asTrimmed(dataObj.output_text));
+    candidates.push(asTrimmed(dataObj.reply));
+    candidates.push(asTrimmed(dataObj.text));
   }
-  if (Array.isArray(content)) {
-    const joined = content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part === "object") {
-          const t = (part as Record<string, unknown>).text;
-          return typeof t === "string" ? t : "";
-        }
-        return "";
-      })
-      .join("")
-      .trim();
-    return joined || null;
-  }
-  if (typeof message?.text === "string") {
-    const trimmed = message.text.trim();
-    return trimmed || null;
-  }
-  return null;
+
+  return candidates.find((c): c is string => Boolean(c)) ?? null;
 }
 
-function normalizeRewriteOutput(text: string): string {
-  const withoutThink = text.replace(/<think>[\s\S]*?(<\/think>|$)/gi, " ");
-  const cleaned = withoutThink
-    .replace(/\*\*/g, "")
-    .replace(/\r/g, "")
+function sanitizeRewriteOutput(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?(<\/think>|$)/gi, " ")
+    .replace(/<\/?think>/gi, " ")
     .trim();
-  if (!cleaned) return "";
+}
 
-  const lines = cleaned
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(
-      (line) =>
-        line.length > 0 && line !== "---" && !/^if you can share more details/i.test(line)
-    );
+function isReasoningOverflowResponse(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const obj = payload as Record<string, unknown>;
+  const choice0 = Array.isArray(obj.choices) ? obj.choices[0] : null;
+  const finishReason =
+    choice0 && typeof choice0 === "object"
+      ? (choice0 as Record<string, unknown>).finish_reason
+      : null;
+  const usage =
+    obj.usage && typeof obj.usage === "object"
+      ? (obj.usage as Record<string, unknown>)
+      : null;
+  const completionTokens =
+    usage && typeof usage.completion_tokens === "number"
+      ? usage.completion_tokens
+      : null;
+  const details =
+    usage?.completion_tokens_details &&
+    typeof usage.completion_tokens_details === "object"
+      ? (usage.completion_tokens_details as Record<string, unknown>)
+      : null;
+  const reasoningTokens =
+    details && typeof details.reasoning_tokens === "number"
+      ? details.reasoning_tokens
+      : null;
 
-  if (lines.length === 0) return "";
+  return (
+    finishReason === "length" &&
+    completionTokens !== null &&
+    reasoningTokens !== null &&
+    completionTokens > 0 &&
+    completionTokens === reasoningTokens
+  );
+}
 
-  const first = lines[0].replace(/^[-*]\s+/, "").trim();
-  return first;
+function isModelNotSupportedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    /\b2061\b/.test(msg) ||
+    msg.includes("not support model") ||
+    msg.includes("unsupported model")
+  );
 }
 
 async function callMinimaxChat(
   config: LocalAiConfig,
   text: string,
-  strict: boolean
+  strict: boolean,
+  modelOverride?: string,
+  maxCompletionTokens = REWRITE_MAX_COMPLETION_TOKENS,
+  promptMode: "default" | "final_only" = "default"
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
@@ -430,21 +593,30 @@ async function callMinimaxChat(
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        model: config.model,
+        model: modelOverride ?? config.model,
+        reasoning_split: true,
         temperature: strict ? 0 : 0.2,
-        max_tokens: 120,
+        max_completion_tokens: maxCompletionTokens,
         messages: [
           {
             role: "system",
             content: strict
-              ? "Rewrite invoice service descriptions. Return exactly one concise plain-text line. The rewritten line must start with a past-tense verb. Do not output <think> tags, reasoning, markdown, bullets, or explanations."
-              : "Rewrite invoice service descriptions. Keep factual meaning. Output exactly one concise plain-text line only. The rewritten line must start with a past-tense verb. No markdown, bullets, options, labels, or explanations.",
+              ? promptMode === "final_only"
+                ? "Return one final invoice line only. No reasoning. No tags. No markdown. Output plain text only."
+                : "Rewrite invoice service descriptions. Return exactly one concise plain-text line in this format: <PastTenseVerb> <NounPhrase>. The first word MUST be a past-tense action verb (for example: Designed, Reviewed, Coordinated, Resolved, Completed, Met). The tone MUST be professional and suitable for a consulting agency service list on an invoice. Choose the most appropriate action verb from the task context and do not default to 'Delivered' unless actual delivery is explicitly described. Never copy the input verbatim. Keep factual meaning. Output line text only with no <think> tags, reasoning, markdown, bullets, labels, or explanations."
+              : promptMode === "final_only"
+              ? "Return one concise invoice line only. Output plain text only."
+              : "Rewrite invoice service descriptions into exactly one concise plain-text line in this format: <PastTenseVerb> <NounPhrase>. Start with one past-tense action verb, then the task noun phrase. Use a professional consulting agency service-list tone suitable for invoice line items. Choose a context-appropriate verb and avoid defaulting to 'Delivered' unless delivery is explicitly mentioned. Never copy the input verbatim. Keep factual meaning. No markdown, bullets, options, labels, or explanations.",
           },
           {
             role: "user",
             content: strict
-              ? `Return one rewritten invoice line only:\n${text}`
-              : `Rewrite into one invoice line:\n${text}`,
+              ? promptMode === "final_only"
+                ? `Service description: ${text}\nReturn final output only.`
+                : `Rewrite this service description into one invoice line only: ${text}`
+              : promptMode === "final_only"
+              ? `Service description: ${text}\nReturn final output only.`
+              : `Rewrite this service description into one invoice line: ${text}`,
           },
         ],
       }),
@@ -478,25 +650,116 @@ async function callMinimaxChat(
   }
 
   const rewrittenText = extractAssistantText(payload);
-  const normalized = rewrittenText ? normalizeRewriteOutput(rewrittenText) : "";
-  if (!normalized) {
+  const raw =
+    typeof rewrittenText === "string"
+      ? sanitizeRewriteOutput(rewrittenText)
+      : "";
+  if (!raw) {
+    if (isReasoningOverflowResponse(payload)) {
+      throw new Error(
+        "MiniMax returned an empty rewrite result (reasoning token overflow)."
+      );
+    }
     throw new Error("MiniMax returned an empty rewrite result.");
   }
-  return normalized;
+  return raw;
 }
 
-async function minimaxRewrite(config: LocalAiConfig, text: string): Promise<string> {
-  try {
-    return await callMinimaxChat(config, text, false);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("MiniMax returned an empty rewrite result.")
-    ) {
-      return await callMinimaxChat(config, text, true);
+async function callMinimaxWithModelFallback(
+  config: LocalAiConfig,
+  text: string,
+  strict: boolean,
+  maxCompletionTokens = REWRITE_MAX_COMPLETION_TOKENS,
+  promptMode: "default" | "final_only" = "default"
+): Promise<{ rewrittenText: string; modelUsed: string }> {
+  const models = [
+    config.model,
+    ...MINIMAX_MODEL_FALLBACK_ORDER.filter((model) => model !== config.model),
+  ];
+
+  let lastModelError: unknown = null;
+  for (const model of models) {
+    try {
+      const rewrittenText = await callMinimaxChat(
+        config,
+        text,
+        strict,
+        model,
+        maxCompletionTokens,
+        promptMode
+      );
+      return { rewrittenText, modelUsed: model };
+    } catch (error) {
+      if (isModelNotSupportedError(error)) {
+        lastModelError = error;
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
+
+  if (lastModelError instanceof Error) throw lastModelError;
+  throw new Error("MiniMax request failed on all configured model fallbacks.");
+}
+
+async function minimaxRewrite(
+  config: LocalAiConfig,
+  text: string
+): Promise<{ rewrittenText: string; modelUsed: string }> {
+  const isEmptyRewriteError = (error: unknown): boolean =>
+    error instanceof Error &&
+    error.message.includes("MiniMax returned an empty rewrite result.");
+  const attempt = async (
+    strict: boolean
+  ): Promise<{ rewrittenText: string; modelUsed: string } | null> => {
+    try {
+      return await callMinimaxWithModelFallback(
+        config,
+        text,
+        strict,
+        REWRITE_MAX_COMPLETION_TOKENS,
+        "default"
+      );
+    } catch (error) {
+      if (isEmptyRewriteError(error)) {
+        try {
+          return await callMinimaxWithModelFallback(
+            config,
+            text,
+            true,
+            REWRITE_RETRY_MAX_COMPLETION_TOKENS,
+            "default"
+          );
+        } catch (retryError) {
+          if (isEmptyRewriteError(retryError)) return null;
+          throw retryError;
+        }
+      }
+      throw error;
+    }
+  };
+
+  const firstCandidate = await attempt(false);
+  if (firstCandidate) return firstCandidate;
+
+  const secondCandidate = await attempt(true);
+  if (secondCandidate) return secondCandidate;
+
+  // Final rescue pass with a minimal prompt to force only final answer text.
+  try {
+    const finalOnly = await callMinimaxWithModelFallback(
+      config,
+      text,
+      true,
+      REWRITE_FINAL_MAX_COMPLETION_TOKENS,
+      "final_only"
+    );
+    if (finalOnly) return finalOnly;
+  } catch (error) {
+    if (!isEmptyRewriteError(error)) throw error;
+  }
+
+  throw new Error("MiniMax returned an empty rewrite result.");
 }
 
 function clientRepoPlugin() {
@@ -616,11 +879,7 @@ function clientRepoPlugin() {
             }
 
             const clientId = parsedUrl.searchParams.get("clientId");
-            const invoices = sortInvoicesDesc(
-              clientId
-                ? db.invoices.filter((inv) => inv.clientId === clientId)
-                : db.invoices
-            );
+            const invoices = invoicesForClientInDisplayOrder(db.invoices, clientId);
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ ok: true, invoices }));
@@ -656,7 +915,7 @@ function clientRepoPlugin() {
               updatedAt: now,
               data,
             };
-            db.invoices.push(record);
+            db.invoices = insertInvoiceAtClientTop(db.invoices, record);
             await writeInvoicesDb(server.config.root, db);
             res.statusCode = 201;
             res.setHeader("Content-Type", "application/json");
@@ -703,6 +962,37 @@ function clientRepoPlugin() {
           }
 
           if (method === "PATCH") {
+            if (invoiceId === "reorder" && !subAction) {
+              const body = await readBody(req);
+              const parsed = JSON.parse(body) as Record<string, unknown>;
+              const clientId =
+                typeof parsed.clientId === "string" ? parsed.clientId.trim() : "";
+              const orderedIds = Array.isArray(parsed.orderedIds)
+                ? parsed.orderedIds.filter(
+                    (id): id is string => typeof id === "string" && id.trim().length > 0
+                  )
+                : [];
+
+              if (!clientId) {
+                res.statusCode = 400;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: false, error: "clientId is required." }));
+                return;
+              }
+
+              const { nextInvoices, clientInvoices } = reorderClientInvoices(
+                db.invoices,
+                clientId,
+                orderedIds
+              );
+              db.invoices = nextInvoices;
+              await writeInvoicesDb(server.config.root, db);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true, invoices: clientInvoices }));
+              return;
+            }
+
             if (!invoiceId || subAction !== "reference-name") {
               res.statusCode = 400;
               res.setHeader("Content-Type", "application/json");
@@ -883,7 +1173,10 @@ function clientRepoPlugin() {
 
           const body = await readBody(req);
           const parsed = JSON.parse(body) as Record<string, unknown>;
-          const apiKey = typeof parsed.apiKey === "string" ? parsed.apiKey.trim() : "";
+          const existing = await readAiConfig(server.config.root);
+          const incomingApiKey =
+            typeof parsed.apiKey === "string" ? parsed.apiKey.trim() : "";
+          const apiKey = incomingApiKey || existing?.apiKey || "";
           if (!apiKey) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -891,11 +1184,15 @@ function clientRepoPlugin() {
             return;
           }
 
+          const baseUrl =
+            parsed.baseUrl ?? existing?.baseUrl ?? DEFAULT_AI_BASE_URL;
+          const model = parsed.model ?? existing?.model ?? DEFAULT_AI_MODEL;
+
           const config: LocalAiConfig = {
             provider: "minimax",
             apiKey,
-            baseUrl: normalizeBaseUrl(parsed.baseUrl),
-            model: normalizeText(parsed.model, DEFAULT_AI_MODEL),
+            baseUrl: normalizeBaseUrl(baseUrl),
+            model: normalizeText(model, DEFAULT_AI_MODEL),
           };
           await writeAiConfig(server.config.root, config);
 
@@ -945,7 +1242,13 @@ function clientRepoPlugin() {
             return;
           }
 
-          const rewrittenText = await minimaxRewrite(config, text);
+          const { rewrittenText, modelUsed } = await minimaxRewrite(config, text);
+          if (modelUsed !== config.model) {
+            await writeAiConfig(server.config.root, {
+              ...config,
+              model: modelUsed,
+            });
+          }
 
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
