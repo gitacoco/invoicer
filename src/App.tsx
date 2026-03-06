@@ -113,6 +113,7 @@ export default function App() {
   const [draggingInvoiceId, setDraggingInvoiceId] = useState<string | null>(null);
   const [dragOverInvoiceId, setDragOverInvoiceId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [secondaryPanelCollapsed, setSecondaryPanelCollapsed] = useState(false);
   const lastSavedSnapshotRef = useRef("");
   const autoSaveSeqRef = useRef(0);
 
@@ -714,8 +715,14 @@ export default function App() {
         </aside>
 
         {/* Secondary side panel */}
-        <aside className="w-[430px] shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] overflow-hidden">
-          {isInvoiceOpen ? (
+        <aside
+          className={`shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] overflow-x-hidden transition-all duration-200 flex flex-col ${
+            secondaryPanelCollapsed ? "w-[40px]" : "w-[430px]"
+          }`}
+        >
+          {secondaryPanelCollapsed ? (
+            <div className="flex-1" />
+          ) : isInvoiceOpen ? (
             <InvoiceForm
               invoice={invoice}
               updateField={updateField}
@@ -742,6 +749,35 @@ export default function App() {
               Select an existing invoice or click + New Invoice to start editing.
             </div>
           )}
+          <div className="shrink-0 border-t border-[#d6ddd5] flex items-center px-1.5 py-2">
+            <button
+              type="button"
+              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6f7a73] hover:text-[#2f5168] hover:bg-[#e8eeeb] transition-colors"
+              onClick={() => setSecondaryPanelCollapsed(!secondaryPanelCollapsed)}
+              title={
+                secondaryPanelCollapsed
+                  ? "Expand secondary panel"
+                  : "Collapse secondary panel"
+              }
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {secondaryPanelCollapsed ? (
+                  <polyline points="9 18 15 12 9 6" />
+                ) : (
+                  <polyline points="15 18 9 12 15 6" />
+                )}
+              </svg>
+            </button>
+          </div>
         </aside>
 
         {/* Preview area */}
