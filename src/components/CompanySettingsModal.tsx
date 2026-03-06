@@ -120,6 +120,7 @@ const SECTIONS = [
   { id: "payment-instructions", label: "Payment instructions" },
   { id: "api-settings", label: "API settings" },
 ] as const;
+type SectionId = (typeof SECTIONS)[number]["id"];
 
 export default function CompanySettingsModal({
   open,
@@ -140,11 +141,9 @@ export default function CompanySettingsModal({
   );
   const [showTogglApiKey, setShowTogglApiKey] = useState(false);
   const [showMinimaxApiKey, setShowMinimaxApiKey] = useState(false);
-  const [activeSection, setActiveSection] = useState<(typeof SECTIONS)[number]["id"]>(
-    "company-info"
-  );
+  const [activeSection, setActiveSection] = useState<SectionId>("company-info");
   const [error, setError] = useState<string | null>(null);
-  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sectionRefs = useRef<Partial<Record<SectionId, HTMLElement | null>>>({});
   const logoFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -174,7 +173,7 @@ export default function CompanySettingsModal({
     setSettingsDraft((prev) => ({ ...prev, [key]: value }));
   };
 
-  const scrollToSection = (id: (typeof SECTIONS)[number]["id"]) => {
+  const scrollToSection = (id: SectionId) => {
     const node = sectionRefs.current[id];
     if (!node) return;
     setActiveSection(id);
