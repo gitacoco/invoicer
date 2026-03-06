@@ -42,6 +42,129 @@ const COLORS = {
   divider: "#f2f5f9",
 };
 
+const SINGLE_PAGE_CAPACITY = 24;
+const FIRST_MULTI_PAGE_CAPACITY = 32;
+const MIDDLE_PAGE_CAPACITY = 32;
+const LAST_PAGE_CAPACITY = 26;
+const SERVICE_CHARS_PER_LINE = 62;
+const EXTRA_LINE_HEIGHT_WEIGHT = 0.52;
+const MIN_PAGE_FILL_RATIO = 0.68;
+
+function estimateWrappedLineCount(text: string, charsPerLine: number): number {
+  const source = text.trim();
+  if (!source) return 1;
+
+  const charVisualWidth = (char: string): number => {
+    if (/[\u2E80-\uA4CF\uAC00-\uD7AF\uF900-\uFAFF\uFE10-\uFE6F\uFF00-\uFFEF]/.test(char)) {
+      return 1.8;
+    }
+    if (/\s/.test(char)) return 0.6;
+    return 1;
+  };
+
+  const measureLine = (line: string) =>
+    Array.from(line).reduce((sum, char) => sum + charVisualWidth(char), 0);
+
+  return source.split("\n").reduce((sum, line) => {
+    const normalizedLine = line.trim();
+    if (!normalizedLine) return sum + 1;
+    const visualWidth = measureLine(normalizedLine);
+    return sum + Math.max(1, Math.ceil(visualWidth / charsPerLine));
+  }, 0);
+}
+
+function estimateLineItemHeightUnits(item: InvoiceData["lineItems"][number]): number {
+  const serviceLineCount = estimateWrappedLineCount(
+    item.service || "",
+    SERVICE_CHARS_PER_LINE
+  );
+  return 1 + (serviceLineCount - 1) * EXTRA_LINE_HEIGHT_WEIGHT;
+}
+
+function paginateLineItems<T>(
+  items: T[],
+  getItemHeightUnits: (item: T) => number,
+  singlePageCapacity: number,
+  firstMultiPageCapacity: number,
+  middlePageCapacity: number,
+  lastPageCapacity: number
+): T[][] {
+  if (items.length === 0) return [[]];
+
+  const weights = items.map(getItemHeightUnits);
+  const prefixSums = [0];
+  for (const weight of weights) {
+    prefixSums.push(prefixSums[prefixSums.length - 1] + weight);
+  }
+
+  const sumRange = (start: number, end: number) => prefixSums[end] - prefixSums[start];
+
+  if (sumRange(0, items.length) <= singlePageCapacity) return [items];
+
+  const pages: T[][] = [];
+  let cursor = 0;
+
+  while (cursor < items.length) {
+    const capacity = pages.length === 0 ? firstMultiPageCapacity : middlePageCapacity;
+    let end = cursor;
+    let used = 0;
+
+    while (end < items.length) {
+      const nextWeight = weights[end];
+      if (used + nextWeight > capacity && end > cursor) break;
+
+      used += nextWeight;
+      end += 1;
+
+      const remaining = sumRange(end, items.length);
+      if (remaining > 0 && remaining <= lastPageCapacity) {
+        break;
+      }
+    }
+
+    if (end === cursor) {
+      end = cursor + 1;
+    }
+
+    pages.push(items.slice(cursor, end));
+    cursor = end;
+
+    const remaining = sumRange(cursor, items.length);
+    if (remaining > 0 && remaining <= lastPageCapacity) {
+      pages.push(items.slice(cursor));
+      break;
+    }
+  }
+
+  const getPageWeight = (pageItems: T[]) =>
+    pageItems.reduce((sum, pageItem) => sum + getItemHeightUnits(pageItem), 0);
+
+  for (let pageIndex = 0; pageIndex < pages.length - 1; pageIndex += 1) {
+    const currentCapacity =
+      pageIndex === 0 ? firstMultiPageCapacity : middlePageCapacity;
+    const minDesiredWeight = currentCapacity * MIN_PAGE_FILL_RATIO;
+    let currentWeight = getPageWeight(pages[pageIndex]);
+
+    while (currentWeight < minDesiredWeight && pages[pageIndex + 1].length > 1) {
+      const nextItem = pages[pageIndex + 1][0];
+      const nextWeight = getItemHeightUnits(nextItem);
+      if (currentWeight + nextWeight > currentCapacity) {
+        break;
+      }
+      pages[pageIndex].push(nextItem);
+      pages[pageIndex + 1].shift();
+      currentWeight += nextWeight;
+    }
+
+    if (pages[pageIndex + 1].length === 0) {
+      pages.splice(pageIndex + 1, 1);
+      pageIndex -= 1;
+    }
+  }
+
+  return pages;
+}
+
 /** Blend a hex color at 10% opacity over white */
 function hexToLightBg(hex: string): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -64,6 +187,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     flexDirection: "column",
     justifyContent: "space-between",
+  },
+  pageContinuation: {
+    paddingTop: 24,
   },
 
   /* Header */
@@ -126,6 +252,27 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
   },
+  tableHeaderContinuation: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+    paddingTop: 10,
+  },
+  continuationFrom: {
+    paddingHorizontal: 20,
+    paddingTop: 2,
+    fontSize: 10,
+    color: COLORS.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  continuationTo: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    fontSize: 10,
+    color: COLORS.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
   tableHeaderText: { fontSize: 10, color: COLORS.muted },
   colDate: { width: 80 },
   colService: { flex: 1 },
@@ -141,7 +288,7 @@ const s = StyleSheet.create({
     marginBottom: 5,
   },
   cellDate: { width: 80, fontSize: 11, fontWeight: 500 },
-  cellService: { flex: 1, fontSize: 11, color: COLORS.muted },
+  cellService: { flex: 1, fontSize: 11, color: COLORS.muted, lineHeight: 1.35 },
   cellHours: { width: 41, fontSize: 11, textAlign: "right" },
 
   /* Summary */
@@ -258,6 +405,14 @@ export default function InvoicePDF({
   const visibleItems = invoice.lineItems.filter(
     (item) => item.date || item.service || item.hours
   );
+  const pagedItems = paginateLineItems(
+    visibleItems,
+    estimateLineItemHeightUnits,
+    SINGLE_PAGE_CAPACITY,
+    FIRST_MULTI_PAGE_CAPACITY,
+    MIDDLE_PAGE_CAPACITY,
+    LAST_PAGE_CAPACITY
+  );
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
   const companyNameLines = companySettings.companyName
@@ -267,185 +422,203 @@ export default function InvoicePDF({
 
   return (
     <Document>
-      <Page size="A4" style={s.page}>
-        {/* ── Top content ── */}
-        <View>
-          {/* Header */}
-          <View style={[s.header, { backgroundColor: lightBg }]}>
-            {/* Title row */}
-            <View style={s.headerTitleRow}>
-              <Text style={s.invoiceTitle}>Invoice</Text>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={s.invoiceNumLabel}>Invoice Number</Text>
-                <Text style={s.invoiceNumValue}>
-                  {invoice.invoiceNumber || "INV-XXXXXX"}
-                </Text>
-              </View>
-            </View>
+      {pagedItems.map((items, pageIndex) => {
+        const isFirstPage = pageIndex === 0;
+        const isLastPage = pageIndex === pagedItems.length - 1;
 
-            {/* Billing info */}
-            <View style={s.billingRow}>
-              {/* Bill To */}
-              <View>
-                <Text style={s.sectionLabel}>Bill To</Text>
-                <View style={s.clientNameRow}>
-                  {clientLogoUrl && (
-                    <Image src={clientLogoUrl} style={s.clientLogo} />
-                  )}
-                  <Text style={s.clientName}>
-                    {client.name || "Client Name"}
-                  </Text>
-                </View>
-                <Text style={s.clientAddress}>
-                  {client.address || "Client Address"}
-                </Text>
-              </View>
-
-              {/* Dates */}
-              <View style={{ alignItems: "flex-end" }}>
-                <View style={s.dateBlock}>
-                  <Text style={s.dateLabel}>Issued on</Text>
-                  <Text style={s.dateValue}>
-                    {formatDate(invoice.issuedDate)}
-                  </Text>
-                </View>
-                <View style={s.dateBlock}>
-                  <Text style={s.dateLabel}>Payment Due</Text>
-                  <Text style={s.dateValue}>
-                    {formatDate(paymentDueDate)}
-                  </Text>
-                </View>
-                <View style={[s.dateBlock, { marginBottom: 0 }]}>
-                  <Text style={s.dateLabel}>Service Period</Text>
-                  <Text style={s.dateValue}>
-                    {periodStart && periodEnd
-                      ? `${periodStart} to ${periodEnd}`
-                      : "\u2014"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </View>
-
-          {/* Line items table */}
-          <View style={s.tableHeader}>
-            <Text style={[s.tableHeaderText, s.colDate]}>Date</Text>
-            <Text style={[s.tableHeaderText, s.colService]}>Service</Text>
-            <Text style={[s.tableHeaderText, s.colHours]}>Hours</Text>
-          </View>
-          <View style={s.tableBody}>
-            {visibleItems.map((item) => (
-              <View key={item.id} style={s.tableRow}>
-                <Text style={[s.cellDate, s.colDate]}>{item.date}</Text>
-                <Text style={[s.cellService, s.colService]}>
-                  {item.service}
-                </Text>
-                <Text style={[s.cellHours, s.colHours]}>
-                  {formatHours(item.hours)}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Summary */}
-          <View style={s.summaryWrap}>
-            <View style={s.divider} />
-            <View style={s.summaryBox}>
-              <View style={s.summaryRow}>
-                <Text style={s.summaryLabel}>Total Hours</Text>
-                <Text style={s.summaryValue}>{formatHours(totalHours)}</Text>
-              </View>
-            </View>
-            <View style={[s.divider, { width: 282 }]} />
-            <View style={s.summaryBox}>
-              <View style={s.summaryRow}>
-                <Text style={s.summaryLabel}>Hourly Rate</Text>
-                <Text style={s.summaryValue}>
-                  {formatCurrency(client.hourlyRate)}
-                </Text>
-              </View>
-            </View>
-            <View style={[s.balanceDue, { backgroundColor: themeColor }]}>
-              <Text style={s.balanceLabel}>Balance Due</Text>
-              <Text style={s.balanceValue}>{formatCurrency(balanceDue)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ── Footer ── */}
-        <View style={s.footer}>
-          <View style={s.footerRow}>
-            {/* Company details */}
-            <View style={s.footerColLeft}>
-              <View style={s.companyHeaderRow}>
-                {companyLogoUrl && (
-                  <Image src={companyLogoUrl} style={s.companyLogo} />
-                )}
-                <View style={s.companyNameWrap}>
-                  {(companyNameLines.length > 0
-                    ? companyNameLines
-                    : [companySettings.companyName]
-                  ).map((line, idx) => (
-                    <Text key={`${line}-${idx}`} style={s.companyName}>
-                      {line}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-              {companySettings.companyAddress
-                .split("\n")
-                .filter((line) => line.trim())
-                .map((line, idx) => (
-                  <Text key={`${line}-${idx}`} style={s.footerText}>
-                    {line}
-                  </Text>
-                ))}
-              <Text style={s.footerEmail}>{companySettings.contactEmail}</Text>
-              <View style={s.einRow}>
-                <Text style={s.footerMuted}>EIN</Text>
-                <Text style={s.footerText}>{companySettings.ein}</Text>
-              </View>
-            </View>
-
-            {/* Payment instructions */}
-            <View style={s.footerColRight}>
-              <Text style={s.paymentTitle}>Payment Instructions</Text>
-              <Text style={s.paymentDesc}>{companySettings.guidanceLanguage}</Text>
-              <View style={s.paymentGrid}>
-                <View style={s.paymentCol}>
-                  <Text style={s.footerMuted}>Routing number</Text>
-                  <Text style={[s.footerText, { fontWeight: 500 }]}>
-                    {companySettings.routingNumber}
-                  </Text>
-                </View>
-                <View style={s.paymentColWide}>
-                  <Text style={s.footerMuted}>Account number</Text>
-                  <Text style={[s.footerText, { fontWeight: 500 }]}>
-                    {companySettings.accountNumber}
-                  </Text>
-                </View>
-              </View>
-              <View style={s.paymentGrid}>
-                <View style={s.paymentCol}>
-                  <Text style={s.footerMuted}>Receiving bank</Text>
-                  <Text style={s.footerText}>{companySettings.receivingBank}</Text>
-                </View>
-                <View style={s.paymentColWide}>
-                  <Text style={s.footerMuted}>Bank address</Text>
-                  {companySettings.bankAddress
-                    .split("\n")
-                    .filter((line) => line.trim())
-                    .map((line, idx) => (
-                      <Text key={`${line}-${idx}`} style={s.footerText}>
-                        {line}
+        return (
+          <Page
+            key={`invoice-page-${pageIndex}`}
+            size="A4"
+            style={isFirstPage ? s.page : [s.page, s.pageContinuation]}
+          >
+            <View>
+              {isFirstPage && (
+                <View style={[s.header, { backgroundColor: lightBg }]}>
+                  <View style={s.headerTitleRow}>
+                    <Text style={s.invoiceTitle}>Invoice</Text>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text style={s.invoiceNumLabel}>Invoice Number</Text>
+                      <Text style={s.invoiceNumValue}>
+                        {invoice.invoiceNumber || "INV-XXXXXX"}
                       </Text>
-                    ))}
+                    </View>
+                  </View>
+
+                  <View style={s.billingRow}>
+                    <View>
+                      <Text style={s.sectionLabel}>Bill To</Text>
+                      <View style={s.clientNameRow}>
+                        {clientLogoUrl && (
+                          <Image src={clientLogoUrl} style={s.clientLogo} />
+                        )}
+                        <Text style={s.clientName}>
+                          {client.name || "Client Name"}
+                        </Text>
+                      </View>
+                      <Text style={s.clientAddress}>
+                        {client.address || "Client Address"}
+                      </Text>
+                    </View>
+
+                    <View style={{ alignItems: "flex-end" }}>
+                      <View style={s.dateBlock}>
+                        <Text style={s.dateLabel}>Issued on</Text>
+                        <Text style={s.dateValue}>
+                          {formatDate(invoice.issuedDate)}
+                        </Text>
+                      </View>
+                      <View style={s.dateBlock}>
+                        <Text style={s.dateLabel}>Payment Due</Text>
+                        <Text style={s.dateValue}>
+                          {formatDate(paymentDueDate)}
+                        </Text>
+                      </View>
+                      <View style={[s.dateBlock, { marginBottom: 0 }]}>
+                        <Text style={s.dateLabel}>Service Period</Text>
+                        <Text style={s.dateValue}>
+                          {periodStart && periodEnd
+                            ? `${periodStart} to ${periodEnd}`
+                            : "\u2014"}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {!isFirstPage && (
+                <Text style={s.continuationFrom}>Continued from previous page</Text>
+              )}
+
+              <View style={isFirstPage ? s.tableHeader : s.tableHeaderContinuation}>
+                <Text style={[s.tableHeaderText, s.colDate]}>Date</Text>
+                <Text style={[s.tableHeaderText, s.colService]}>Service</Text>
+                <Text style={[s.tableHeaderText, s.colHours]}>Hours</Text>
+              </View>
+              <View style={s.tableBody}>
+                {items.map((item) => (
+                  <View key={item.id} style={s.tableRow}>
+                    <Text style={[s.cellDate, s.colDate]}>{item.date}</Text>
+                    <Text style={[s.cellService, s.colService]}>
+                      {item.service}
+                    </Text>
+                    <Text style={[s.cellHours, s.colHours]}>
+                      {formatHours(item.hours)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              {!isLastPage && (
+                <Text style={s.continuationTo}>Continued on next page</Text>
+              )}
+
+              {isLastPage && (
+                <View style={s.summaryWrap}>
+                  <View style={s.divider} />
+                  <View style={s.summaryBox}>
+                    <View style={s.summaryRow}>
+                      <Text style={s.summaryLabel}>Total Hours</Text>
+                      <Text style={s.summaryValue}>{formatHours(totalHours)}</Text>
+                    </View>
+                  </View>
+                  <View style={[s.divider, { width: 282 }]} />
+                  <View style={s.summaryBox}>
+                    <View style={s.summaryRow}>
+                      <Text style={s.summaryLabel}>Hourly Rate</Text>
+                      <Text style={s.summaryValue}>
+                        {formatCurrency(client.hourlyRate)}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[s.balanceDue, { backgroundColor: themeColor }]}>
+                    <Text style={s.balanceLabel}>Balance Due</Text>
+                    <Text style={s.balanceValue}>{formatCurrency(balanceDue)}</Text>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {isLastPage && (
+              <View style={s.footer}>
+                <View style={s.footerRow}>
+                  <View style={s.footerColLeft}>
+                    <View style={s.companyHeaderRow}>
+                      {companyLogoUrl && (
+                        <Image src={companyLogoUrl} style={s.companyLogo} />
+                      )}
+                      <View style={s.companyNameWrap}>
+                        {(companyNameLines.length > 0
+                          ? companyNameLines
+                          : [companySettings.companyName]
+                        ).map((line, idx) => (
+                          <Text key={`${line}-${idx}`} style={s.companyName}>
+                            {line}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                    {companySettings.companyAddress
+                      .split("\n")
+                      .filter((line) => line.trim())
+                      .map((line, idx) => (
+                        <Text key={`${line}-${idx}`} style={s.footerText}>
+                          {line}
+                        </Text>
+                      ))}
+                    <Text style={s.footerEmail}>{companySettings.contactEmail}</Text>
+                    <View style={s.einRow}>
+                      <Text style={s.footerMuted}>EIN</Text>
+                      <Text style={s.footerText}>{companySettings.ein}</Text>
+                    </View>
+                  </View>
+
+                  <View style={s.footerColRight}>
+                    <Text style={s.paymentTitle}>Payment Instructions</Text>
+                    <Text style={s.paymentDesc}>
+                      {companySettings.guidanceLanguage}
+                    </Text>
+                    <View style={s.paymentGrid}>
+                      <View style={s.paymentCol}>
+                        <Text style={s.footerMuted}>Routing number</Text>
+                        <Text style={[s.footerText, { fontWeight: 500 }]}>
+                          {companySettings.routingNumber}
+                        </Text>
+                      </View>
+                      <View style={s.paymentColWide}>
+                        <Text style={s.footerMuted}>Account number</Text>
+                        <Text style={[s.footerText, { fontWeight: 500 }]}>
+                          {companySettings.accountNumber}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={s.paymentGrid}>
+                      <View style={s.paymentCol}>
+                        <Text style={s.footerMuted}>Receiving bank</Text>
+                        <Text style={s.footerText}>
+                          {companySettings.receivingBank}
+                        </Text>
+                      </View>
+                      <View style={s.paymentColWide}>
+                        <Text style={s.footerMuted}>Bank address</Text>
+                        {companySettings.bankAddress
+                          .split("\n")
+                          .filter((line) => line.trim())
+                          .map((line, idx) => (
+                            <Text key={`${line}-${idx}`} style={s.footerText}>
+                              {line}
+                            </Text>
+                          ))}
+                      </View>
+                    </View>
+                  </View>
                 </View>
               </View>
-            </View>
-          </View>
-        </View>
-      </Page>
+            )}
+          </Page>
+        );
+      })}
     </Document>
   );
 }

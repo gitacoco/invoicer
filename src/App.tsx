@@ -112,6 +112,7 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<InvoiceRecord | null>(null);
   const [draggingInvoiceId, setDraggingInvoiceId] = useState<string | null>(null);
   const [dragOverInvoiceId, setDragOverInvoiceId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const lastSavedSnapshotRef = useRef("");
   const autoSaveSeqRef = useRef(0);
 
@@ -604,88 +605,111 @@ export default function App() {
       {/* Primary side panel | Secondary side panel | Preview */}
       <div className="flex-1 min-h-0 flex">
         {/* Primary side panel */}
-        <aside className="w-[250px] shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] p-4 overflow-y-auto">
-          <div className="flex flex-col gap-2">
+        <aside
+          className={`shrink-0 border-r border-[#d6ddd5] bg-[#f8faf6] overflow-x-hidden transition-all duration-200 flex flex-col ${
+            sidebarCollapsed ? "w-[40px]" : "w-[250px]"
+          }`}
+        >
+          {sidebarCollapsed ? (
+            <div className="flex-1" />
+          ) : (
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-[#d3ddd3] bg-white/85 text-[12px] font-medium text-[#2f5168] hover:bg-white transition-colors"
+                onClick={handleCreateInvoice}
+                disabled={!selectedClient || creatingInvoice}
+              >
+                {creatingInvoice ? "Creating..." : "+ New Invoice"}
+              </button>
+              <div className="flex flex-col gap-1.5">
+                {invoices.length === 0 ? (
+                  <div className="px-3 py-2 text-[11px] text-[#6f7a73] border border-[#dce4da] bg-white/90 rounded-xl">
+                    No invoices yet.
+                  </div>
+                ) : (
+                  invoices.map((inv) => {
+                    const isActive = inv.id === activeInvoiceId;
+                    return (
+                      <div
+                        key={inv.id}
+                        className={`group flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
+                          isActive
+                            ? "bg-[#eef3f0] border-[#d6e1d8]"
+                            : "bg-white/90 border-[#dce4da] hover:bg-[#f4f8f4]"
+                        } ${
+                          dragOverInvoiceId === inv.id && draggingInvoiceId !== inv.id
+                            ? "border-[#8ea59a]"
+                            : ""
+                        }`}
+                        draggable={invoices.length > 1}
+                        onDragStart={(event) => handleInvoiceDragStart(event, inv.id)}
+                        onDragOver={handleInvoiceDragOver}
+                        onDragEnter={() => {
+                          if (draggingInvoiceId) setDragOverInvoiceId(inv.id);
+                        }}
+                        onDrop={() => handleInvoiceDrop(inv.id)}
+                        onDragEnd={handleInvoiceDragEnd}
+                      >
+                        <button
+                          type="button"
+                          className="flex-1 min-w-0 text-left"
+                          onClick={() => handleOpenInvoice(inv)}
+                        >
+                          <div className="text-[12px] text-[#24332c] truncate">
+                            {getReferenceName(inv)}
+                          </div>
+                          <div className="text-[10px] text-[#7b8780]">
+                            {inv.updatedAt.slice(0, 10)}
+                          </div>
+                        </button>
+                        <div
+                          className={`flex items-center gap-1 transition-opacity ${
+                            isActive
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#e8eeeb] hover:text-[#254a63] transition-colors"
+                            onClick={() => openRenameDialog(inv)}
+                            aria-label={`Rename ${getReferenceName(inv)}`}
+                            title="Rename invoice"
+                          >
+                            <PencilIcon />
+                          </button>
+                          <button
+                            type="button"
+                            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#f4e7e4] hover:text-[#8a2d2d] transition-colors"
+                            onClick={() => openDeleteDialog(inv)}
+                            aria-label={`Delete ${getReferenceName(inv)}`}
+                            title="Delete invoice"
+                          >
+                            <Trash2Icon />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+          {/* Collapse/expand toggle at bottom */}
+          <div className="shrink-0 border-t border-[#d6ddd5] flex items-center px-1.5 py-2">
             <button
               type="button"
-              className="h-9 rounded-lg border border-[#d3ddd3] bg-white/85 text-[12px] font-medium text-[#2f5168] hover:bg-white transition-colors"
-              onClick={handleCreateInvoice}
-              disabled={!selectedClient || creatingInvoice}
+              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6f7a73] hover:text-[#2f5168] hover:bg-[#e8eeeb] transition-colors"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              {creatingInvoice ? "Creating..." : "+ New Invoice"}
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {sidebarCollapsed
+                  ? <polyline points="9 18 15 12 9 6" />
+                  : <polyline points="15 18 9 12 15 6" />}
+              </svg>
             </button>
-            <div className="flex flex-col gap-1.5">
-              {invoices.length === 0 ? (
-                <div className="px-3 py-2 text-[11px] text-[#6f7a73] border border-[#dce4da] bg-white/90 rounded-xl">
-                  No invoices yet.
-                </div>
-              ) : (
-                invoices.map((inv) => {
-                  const isActive = inv.id === activeInvoiceId;
-                  return (
-                    <div
-                      key={inv.id}
-                      className={`group flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
-                        isActive
-                          ? "bg-[#eef3f0] border-[#d6e1d8]"
-                          : "bg-white/90 border-[#dce4da] hover:bg-[#f4f8f4]"
-                      } ${
-                        dragOverInvoiceId === inv.id && draggingInvoiceId !== inv.id
-                          ? "border-[#8ea59a]"
-                          : ""
-                      }`}
-                      draggable={invoices.length > 1}
-                      onDragStart={(event) => handleInvoiceDragStart(event, inv.id)}
-                      onDragOver={handleInvoiceDragOver}
-                      onDragEnter={() => {
-                        if (draggingInvoiceId) setDragOverInvoiceId(inv.id);
-                      }}
-                      onDrop={() => handleInvoiceDrop(inv.id)}
-                      onDragEnd={handleInvoiceDragEnd}
-                    >
-                      <button
-                        type="button"
-                        className="flex-1 min-w-0 text-left"
-                        onClick={() => handleOpenInvoice(inv)}
-                      >
-                        <div className="text-[12px] text-[#24332c] truncate">
-                          {getReferenceName(inv)}
-                        </div>
-                        <div className="text-[10px] text-[#7b8780]">
-                          {inv.updatedAt.slice(0, 10)}
-                        </div>
-                      </button>
-                      <div
-                        className={`flex items-center gap-1 transition-opacity ${
-                          isActive
-                            ? "opacity-100"
-                            : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#e8eeeb] hover:text-[#254a63] transition-colors"
-                          onClick={() => openRenameDialog(inv)}
-                          aria-label={`Rename ${getReferenceName(inv)}`}
-                          title="Rename invoice"
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#6c7870] hover:bg-[#f4e7e4] hover:text-[#8a2d2d] transition-colors"
-                          onClick={() => openDeleteDialog(inv)}
-                          aria-label={`Delete ${getReferenceName(inv)}`}
-                          title="Delete invoice"
-                        >
-                          <Trash2Icon />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
           </div>
         </aside>
 
@@ -756,19 +780,17 @@ export default function App() {
             </div>
           )}
           {selectedClient && isInvoiceOpen ? (
-            <div className="shadow-[0_10px_24px_rgba(15,23,42,0.10)] border border-[#dce2d8] rounded-xl overflow-hidden">
-              <InvoicePreview
-                invoice={invoice}
-                client={selectedClient}
-                companySettings={companySettings}
-                totalHours={totalHours}
-                balanceDue={balanceDue}
-                updateField={updateField}
-                addLineItem={addLineItem}
-                removeLineItem={removeLineItem}
-                updateLineItem={updateLineItem}
-              />
-            </div>
+            <InvoicePreview
+              invoice={invoice}
+              client={selectedClient}
+              companySettings={companySettings}
+              totalHours={totalHours}
+              balanceDue={balanceDue}
+              updateField={updateField}
+              addLineItem={addLineItem}
+              removeLineItem={removeLineItem}
+              updateLineItem={updateLineItem}
+            />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
               Select or create a client to preview the invoice

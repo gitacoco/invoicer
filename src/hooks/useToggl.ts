@@ -5,15 +5,22 @@ const STORAGE_KEY = "invoicer-toggl";
 // Use Vite dev proxy to avoid CORS; in production you'd need your own proxy
 const BASE_URL = "/toggl-api/api/v9";
 
+const ENV_TOKEN = import.meta.env.VITE_TOGGL_API_TOKEN as string | undefined;
+
 function loadConfig(): TogglConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw
-      ? JSON.parse(raw)
-      : { enabled: false, apiToken: "", clientMap: {} };
+    if (raw) return JSON.parse(raw);
   } catch {
-    return { enabled: false, apiToken: "", clientMap: {} };
+    // fall through to default
   }
+  // Bootstrap from .env.local if localStorage is empty
+  if (ENV_TOKEN) {
+    const initial: TogglConfig = { enabled: true, apiToken: ENV_TOKEN, clientMap: {} };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+    return initial;
+  }
+  return { enabled: false, apiToken: "", clientMap: {} };
 }
 
 function saveConfig(config: TogglConfig) {
