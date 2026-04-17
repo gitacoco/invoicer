@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import type { CompanySettings } from "../types";
-import {
-  DEFAULT_MINIMAX_MODEL,
-  MINIMAX_MODEL_OPTIONS,
-} from "../hooks/useAiRewrite";
 import { resolveAssetUrl } from "../utils/assets";
 
 interface SavePayload {
   settings: CompanySettings;
   togglApiToken: string;
-  minimaxApiKey: string;
-  minimaxModel: string;
 }
 
 interface Props {
@@ -19,8 +13,6 @@ interface Props {
   saving: boolean;
   initialSettings: CompanySettings;
   initialTogglToken: string;
-  initialMinimaxApiKey: string;
-  initialMinimaxModel: string;
   onClose: () => void;
   onSave: (payload: SavePayload) => Promise<void>;
 }
@@ -128,19 +120,12 @@ export default function CompanySettingsModal({
   saving,
   initialSettings,
   initialTogglToken,
-  initialMinimaxApiKey,
-  initialMinimaxModel,
   onClose,
   onSave,
 }: Props) {
   const [settingsDraft, setSettingsDraft] = useState<CompanySettings>(initialSettings);
   const [togglTokenDraft, setTogglTokenDraft] = useState(initialTogglToken);
-  const [minimaxDraft, setMinimaxDraft] = useState(initialMinimaxApiKey);
-  const [minimaxModelDraft, setMinimaxModelDraft] = useState(
-    initialMinimaxModel || DEFAULT_MINIMAX_MODEL
-  );
   const [showTogglApiKey, setShowTogglApiKey] = useState(false);
-  const [showMinimaxApiKey, setShowMinimaxApiKey] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("company-info");
   const [error, setError] = useState<string | null>(null);
   const sectionRefs = useRef<Partial<Record<SectionId, HTMLElement | null>>>({});
@@ -150,19 +135,10 @@ export default function CompanySettingsModal({
     if (!open) return;
     setSettingsDraft(initialSettings);
     setTogglTokenDraft(initialTogglToken);
-    setMinimaxDraft(initialMinimaxApiKey);
-    setMinimaxModelDraft(initialMinimaxModel || DEFAULT_MINIMAX_MODEL);
     setShowTogglApiKey(false);
-    setShowMinimaxApiKey(false);
     setActiveSection("company-info");
     setError(null);
-  }, [
-    open,
-    initialSettings,
-    initialTogglToken,
-    initialMinimaxApiKey,
-    initialMinimaxModel,
-  ]);
+  }, [open, initialSettings, initialTogglToken]);
 
   if (!open) return null;
 
@@ -219,8 +195,6 @@ export default function CompanySettingsModal({
               void onSave({
                 settings: settingsDraft,
                 togglApiToken: togglTokenDraft.trim(),
-                minimaxApiKey: minimaxDraft.trim(),
-                minimaxModel: minimaxModelDraft.trim() || DEFAULT_MINIMAX_MODEL,
               }).catch((err: unknown) => {
                 const message =
                   err instanceof Error ? err.message : "Failed to save settings.";
@@ -392,41 +366,6 @@ export default function CompanySettingsModal({
                       {showTogglApiKey ? <EyeOffIcon /> : <EyeIcon />}
                     </button>
                   </div>
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-[#5f6c65]">MiniMax API</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={showMinimaxApiKey ? "text" : "password"}
-                      className="flex-1 h-10 rounded-lg border border-[#d7e0d5] bg-white px-3 text-[13px] text-[#1f2f28] outline-none focus:border-[#31566f]"
-                      value={minimaxDraft}
-                      onChange={(e) => setMinimaxDraft(e.target.value)}
-                      placeholder="Paste your MiniMax API key"
-                    />
-                    <button
-                      type="button"
-                      className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-[#d7e0d5] text-[#64736b] hover:bg-[#eef3ef] transition-colors"
-                      onClick={() => setShowMinimaxApiKey((prev) => !prev)}
-                      aria-label={showMinimaxApiKey ? "Hide MiniMax API key" : "Show MiniMax API key"}
-                      title={showMinimaxApiKey ? "Hide API key" : "Show API key"}
-                    >
-                      {showMinimaxApiKey ? <EyeOffIcon /> : <EyeIcon />}
-                    </button>
-                  </div>
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-[#5f6c65]">MiniMax Model</span>
-                  <select
-                    className="h-10 rounded-lg border border-[#d7e0d5] bg-white px-3 text-[13px] text-[#1f2f28] outline-none focus:border-[#31566f]"
-                    value={minimaxModelDraft}
-                    onChange={(e) => setMinimaxModelDraft(e.target.value)}
-                  >
-                    {MINIMAX_MODEL_OPTIONS.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
                 </label>
               </section>
 

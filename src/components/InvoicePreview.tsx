@@ -1,10 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { InvoiceData, Client, LineItem, CompanySettings } from "../types";
-import {
-  fetchAiConfig,
-  rewriteServiceText,
-  saveAiConfig,
-} from "../hooks/useAiRewrite";
 import {
   formatCurrency,
   formatDate,
@@ -32,6 +27,7 @@ interface Props {
     field: keyof LineItem,
     value: string | number
   ) => void;
+  finalizeLineItemDate?: (id: string) => void;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -41,98 +37,23 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
 
-function isAbortError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return true;
-  if (error instanceof Error) return /abort/i.test(error.message);
-  return false;
-}
-
-function EyeIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function EyeOffIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m3 3 18 18" />
-      <path d="M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.4" />
-      <path d="M9.9 5.1A10.7 10.7 0 0 1 12 5c7 0 11 7 11 7a21.8 21.8 0 0 1-5.2 5.9" />
-      <path d="M6.2 6.2A21.6 21.6 0 0 0 1 12s4 7 11 7a10.9 10.9 0 0 0 2.1-.2" />
-    </svg>
-  );
-}
-
-function StopIcon({ className = "h-3 w-3" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function RetryIcon({ className = "h-2.5 w-2.5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M21 3v6h-6" />
-      <path d="M20.5 14a8 8 0 1 1-2.2-8.5L21 9" />
-    </svg>
-  );
-}
-
-const SINGLE_PAGE_CAPACITY = 24;
-const FIRST_MULTI_PAGE_CAPACITY = 32;
-const MIDDLE_PAGE_CAPACITY = 32;
-const LAST_PAGE_CAPACITY = 26;
+const SINGLE_PAGE_CAPACITY = 21;
+const FIRST_MULTI_PAGE_CAPACITY = 27;
+const MIDDLE_PAGE_CAPACITY = 27;
+const LAST_PAGE_CAPACITY = 22;
 const SERVICE_CHARS_PER_LINE = 62;
 const EXTRA_LINE_HEIGHT_WEIGHT = 0.52;
-const MIN_PAGE_FILL_RATIO = 0.68;
+const LETTER_PAGE_WIDTH = 612;
+const LETTER_PAGE_HEIGHT = 792;
+
+function getHoursColumnWidth(items: LineItem[]): string {
+  const maxValueChars = items.reduce(
+    (maxChars, item) => Math.max(maxChars, formatHours(item.hours).length),
+    0
+  );
+  return `calc(${Math.max(4, maxValueChars)}ch + 4px)`;
+}
 
 function estimateWrappedLineCount(text: string, charsPerLine: number): number {
   const source = text.trim();
@@ -226,10 +147,9 @@ function paginateLineItems<T>(
   for (let pageIndex = 0; pageIndex < pages.length - 1; pageIndex += 1) {
     const currentCapacity =
       pageIndex === 0 ? firstMultiPageCapacity : middlePageCapacity;
-    const minDesiredWeight = currentCapacity * MIN_PAGE_FILL_RATIO;
     let currentWeight = getPageWeight(pages[pageIndex]);
 
-    while (currentWeight < minDesiredWeight && pages[pageIndex + 1].length > 1) {
+    while (pages[pageIndex + 1].length > 1) {
       const nextItem = pages[pageIndex + 1][0];
       const nextWeight = getItemHeightUnits(nextItem);
       if (currentWeight + nextWeight > currentCapacity) {
@@ -259,26 +179,9 @@ export default function InvoicePreview({
   addLineItem,
   removeLineItem,
   updateLineItem,
+  finalizeLineItemDate,
 }: Props) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [aiConfigLoaded, setAiConfigLoaded] = useState(false);
-  const [aiHasApiKey, setAiHasApiKey] = useState(false);
-  const [aiConfigLoading, setAiConfigLoading] = useState(false);
-  const [aiKeyDraft, setAiKeyDraft] = useState("");
-  const [aiSavingKey, setAiSavingKey] = useState(false);
-  const [aiRewritingItemId, setAiRewritingItemId] = useState<string | null>(
-    null
-  );
-  const [aiSuggestion, setAiSuggestion] = useState<{
-    itemId: string;
-    text: string;
-  } | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [showAiKeyForItemId, setShowAiKeyForItemId] = useState<string | null>(
-    null
-  );
-  const [showInlineAiKey, setShowInlineAiKey] = useState(false);
-  const rewriteAbortRef = useRef<AbortController | null>(null);
 
   const themeColor = client.themeColor || "#006b51";
   const paymentDueDate = computePaymentDueDate(
@@ -291,6 +194,9 @@ export default function InvoicePreview({
     invoice.serviceMonthEnd
   );
   const visibleItems = invoice.lineItems;
+  const lineItemGridTemplate = `80px minmax(0,1fr) ${getHoursColumnWidth(
+    visibleItems
+  )}`;
   const pagedItems = paginateLineItems(
     visibleItems,
     estimateLineItemHeightUnits,
@@ -305,13 +211,6 @@ export default function InvoicePreview({
     .filter((line) => line.trim());
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
-
-  useEffect(() => {
-    return () => {
-      rewriteAbortRef.current?.abort();
-      rewriteAbortRef.current = null;
-    };
-  }, []);
 
   const setStartMonth = (nextStart: string) => {
     if (!updateField || !nextStart) return;
@@ -337,116 +236,12 @@ export default function InvoicePreview({
     updateField("serviceMonthEnd", nextEnd);
   };
 
-  const loadAiConfigIfNeeded = async (): Promise<boolean> => {
-    if (aiConfigLoaded) return aiHasApiKey;
-    setAiConfigLoading(true);
-    try {
-      const config = await fetchAiConfig();
-      setAiConfigLoaded(true);
-      setAiHasApiKey(config.hasApiKey);
-      return config.hasApiKey;
-    } catch (error) {
-      setAiError(getErrorMessage(error, "Failed to load AI settings."));
-      return false;
-    } finally {
-      setAiConfigLoading(false);
-    }
-  };
-
-  const handleAiRewrite = async (item: LineItem) => {
-    if (aiRewritingItemId === item.id) {
-      rewriteAbortRef.current?.abort();
-      return;
-    }
-
-    const source = item.service.trim();
-    if (!source) {
-      setAiError("Please enter service text before rewriting.");
-      return;
-    }
-    setAiSuggestion(null);
-    setAiError(null);
-    const hasApiKey = await loadAiConfigIfNeeded();
-    if (!hasApiKey) {
-      setShowInlineAiKey(false);
-      setShowAiKeyForItemId(item.id);
-      setAiError("Enter your MiniMax API key once to enable rewrite.");
-      return;
-    }
-    setShowAiKeyForItemId(null);
-    rewriteAbortRef.current?.abort();
-    const controller = new AbortController();
-    rewriteAbortRef.current = controller;
-    setAiRewritingItemId(item.id);
-    try {
-      const rewritten = await rewriteServiceText(source, {
-        signal: controller.signal,
-      });
-      setAiSuggestion({ itemId: item.id, text: rewritten });
-    } catch (error) {
-      if (isAbortError(error)) {
-        return;
-      }
-      setAiError(getErrorMessage(error, "AI rewrite failed."));
-    } finally {
-      if (rewriteAbortRef.current === controller) {
-        rewriteAbortRef.current = null;
-      }
-      setAiRewritingItemId((prev) => (prev === item.id ? null : prev));
-    }
-  };
-
-  const handleSaveAiKey = async (item: LineItem) => {
-    const apiKey = aiKeyDraft.trim();
-    let controller: AbortController | null = null;
-    if (!apiKey) {
-      setAiError("API key cannot be empty.");
-      return;
-    }
-    setAiSavingKey(true);
-    setAiError(null);
-    try {
-      await saveAiConfig(apiKey);
-      setAiConfigLoaded(true);
-      setAiHasApiKey(true);
-      setAiKeyDraft("");
-      setShowAiKeyForItemId(null);
-      const source = item.service.trim();
-      if (!source) return;
-      rewriteAbortRef.current?.abort();
-      controller = new AbortController();
-      rewriteAbortRef.current = controller;
-      setAiRewritingItemId(item.id);
-      const rewritten = await rewriteServiceText(source, {
-        signal: controller.signal,
-      });
-      setAiSuggestion({ itemId: item.id, text: rewritten });
-    } catch (error) {
-      if (isAbortError(error)) {
-        return;
-      }
-      setAiError(getErrorMessage(error, "AI rewrite failed."));
-    } finally {
-      if (controller && rewriteAbortRef.current === controller) {
-        rewriteAbortRef.current = null;
-      }
-      setAiRewritingItemId(null);
-      setAiSavingKey(false);
-    }
-  };
-
-  const clearAiUi = () => {
-    setShowAiKeyForItemId(null);
-    setShowInlineAiKey(false);
-    setAiSuggestion(null);
-    setAiError(null);
-  };
-
   return (
     <div className="flex flex-col gap-4">
       {pagedItems.map((pageItems, pageIndex) => {
         const isFirstPage = pageIndex === 0;
         const isLastPage = pageIndex === pagedItems.length - 1;
+        const hasPagination = pagedItems.length > 1;
 
         return (
           <div
@@ -454,10 +249,16 @@ export default function InvoicePreview({
             className="shadow-[0_10px_24px_rgba(15,23,42,0.10)] border border-[#dce2d8] rounded-xl overflow-hidden"
           >
             <div
-              className={`bg-white flex flex-col w-[595px] min-h-[842px] pb-[16px] px-[10px] font-sans text-dark ${
+              className={`bg-white flex flex-col px-[10px] font-sans text-dark ${
+                hasPagination ? (isLastPage ? "pb-[24px]" : "pb-[40px]") : "pb-[80px]"
+              } ${
                 isFirstPage ? "pt-[10px]" : "pt-[24px]"
               }`}
-              style={{ fontFamily: "'Inter', sans-serif" }}
+              style={{
+                fontFamily: "'Inter', sans-serif",
+                width: `${LETTER_PAGE_WIDTH}px`,
+                height: `${LETTER_PAGE_HEIGHT}px`,
+              }}
             >
               <div className="flex flex-col gap-2 w-full">
                 {isFirstPage && (
@@ -608,9 +409,10 @@ export default function InvoicePreview({
                     </div>
                   )}
                   <div
-                    className={`grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 px-5 text-[10px] text-muted items-center ${
+                    className={`grid gap-3 px-5 text-[10px] text-muted items-center ${
                       isFirstPage ? "pt-2" : "pt-3"
                     }`}
+                    style={{ gridTemplateColumns: lineItemGridTemplate }}
                   >
                     <span>Date</span>
                     <span>Service</span>
@@ -620,18 +422,12 @@ export default function InvoicePreview({
                   <div className="flex flex-col gap-[5px] px-5 pt-2">
                     {pageItems.map((item) => {
                       const isServiceEditing = editingKey === `li-${item.id}-service`;
-                      const isRewriting = aiRewritingItemId === item.id;
-                      const showApiKeyPrompt = showAiKeyForItemId === item.id;
-                      const suggestionForItem =
-                        aiSuggestion?.itemId === item.id ? aiSuggestion.text : null;
-                      const hasAiPanel = Boolean(
-                        showApiKeyPrompt || suggestionForItem || aiError
-                      );
 
                       return (
                         <div
                           key={item.id}
-                          className="relative grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-start text-[11px] group"
+                          className="relative grid gap-3 items-start text-[11px] group"
+                          style={{ gridTemplateColumns: lineItemGridTemplate }}
                         >
                           {editingKey === `li-${item.id}-date` ? (
                             <input
@@ -642,10 +438,13 @@ export default function InvoicePreview({
                               onChange={(e) =>
                                 updateLineItem?.(item.id, "date", e.target.value)
                               }
-                              onBlur={() => setEditingKey(null)}
+                              onBlur={() => {
+                                finalizeLineItemDate?.(item.id);
+                                setEditingKey(null);
+                              }}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === "Escape") {
-                                  setEditingKey(null);
+                                  e.currentTarget.blur();
                                 }
                               }}
                             />
@@ -660,152 +459,22 @@ export default function InvoicePreview({
                           )}
 
                           {isServiceEditing ? (
-                            <div className="relative min-w-0" data-ai-editor={item.id}>
-                              <input
+                            <div className="relative min-w-0">
+                              <textarea
                                 autoFocus
-                                className={`w-full text-muted rounded px-1 py-0.5 outline-none min-w-0 ${
-                                  isRewriting
-                                    ? "ai-rewrite-input--rewriting"
-                                    : "border border-gray-200 bg-white focus:border-brand"
-                                }`}
+                                rows={Math.max(2, (item.service.match(/\n/g)?.length ?? 0) + 1)}
+                                className="w-full text-muted rounded px-1 py-0.5 outline-none min-w-0 leading-[1.35] resize-y border border-gray-200 bg-white focus:border-brand"
                                 value={item.service}
                                 onChange={(e) =>
                                   updateLineItem?.(item.id, "service", e.target.value)
                                 }
-                                onBlur={() => {
-                                  window.requestAnimationFrame(() => {
-                                    const active = document.activeElement as HTMLElement | null;
-                                    if (active?.closest(`[data-ai-editor=\"${item.id}\"]`)) {
-                                      return;
-                                    }
-                                    setEditingKey(null);
-                                    clearAiUi();
-                                  });
-                                }}
+                                onBlur={() => setEditingKey(null)}
                                 onKeyDown={(e) => {
                                   if (e.key === "Escape") {
                                     setEditingKey(null);
-                                    clearAiUi();
                                   }
                                 }}
                               />
-                              {!hasAiPanel && (
-                                <div className="absolute left-0 top-full mt-1 z-10">
-                                  <button
-                                    type="button"
-                                    className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors inline-flex items-center gap-1"
-                                    onClick={() => {
-                                      void handleAiRewrite(item);
-                                    }}
-                                    disabled={!isRewriting && (aiSavingKey || aiConfigLoading)}
-                                  >
-                                    {isRewriting ? (
-                                      <>
-                                        <StopIcon className="h-2.5 w-2.5" />
-                                        Rewriting
-                                      </>
-                                    ) : aiConfigLoading ? (
-                                      "Loading..."
-                                    ) : (
-                                      "AI Rewrite"
-                                    )}
-                                  </button>
-                                </div>
-                              )}
-
-                              {hasAiPanel && (
-                                <div className="absolute left-0 right-0 top-full mt-1 z-20 border border-[#dbe3d8] bg-white/92 backdrop-blur-[2px] rounded-md p-2 shadow-[0_12px_28px_rgba(20,35,30,0.18),0_3px_10px_rgba(20,35,30,0.1)]">
-                                  {showApiKeyPrompt && (
-                                    <div className="flex flex-col gap-2">
-                                      <div className="text-[10px] text-[#5d6761]">
-                                        Enter MiniMax API key (saved locally on this
-                                        machine).
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type={showInlineAiKey ? "text" : "password"}
-                                          className="flex-1 border border-gray-200 rounded px-1.5 py-1 text-[10px] outline-none focus:border-brand"
-                                          value={aiKeyDraft}
-                                          onChange={(e) => setAiKeyDraft(e.target.value)}
-                                          placeholder="sk-..."
-                                        />
-                                        <button
-                                          type="button"
-                                          className="h-7 w-7 inline-flex items-center justify-center border border-[#cfd7cc] rounded-md text-[#5d6761] bg-white hover:bg-[#eef3ec] transition-colors"
-                                          onClick={() => setShowInlineAiKey((prev) => !prev)}
-                                          aria-label={showInlineAiKey ? "Hide API key" : "Show API key"}
-                                          title={showInlineAiKey ? "Hide API key" : "Show API key"}
-                                        >
-                                          {showInlineAiKey ? <EyeOffIcon /> : <EyeIcon />}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="h-7 px-2 border border-[#cfd7cc] rounded-md text-[10px] font-medium text-[#2f5168] bg-white hover:bg-[#eef3ec] transition-colors disabled:opacity-60"
-                                          onClick={() => {
-                                            void handleSaveAiKey(item);
-                                          }}
-                                          disabled={aiSavingKey}
-                                        >
-                                          {aiSavingKey ? "Saving..." : "Save key"}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {suggestionForItem && (
-                                    <div className="flex flex-col gap-2">
-                                      <div className="text-[12px] text-[#1f2a27]">
-                                        {suggestionForItem}
-                                      </div>
-                                      <div className="flex items-center justify-between gap-2">
-                                        <button
-                                          type="button"
-                                          className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] text-[#5d6761] hover:bg-[#f2f5f1] transition-colors"
-                                          onClick={() => {
-                                            setAiSuggestion(null);
-                                            setAiError(null);
-                                          }}
-                                        >
-                                          Cancel
-                                        </button>
-                                        <div className="flex items-center gap-2">
-                                          <button
-                                            type="button"
-                                            className="h-6 px-2 border border-[#cfd7cc] rounded-md text-[10px] text-[#5d6761] hover:bg-[#f2f5f1] transition-colors disabled:opacity-60 inline-flex items-center gap-1"
-                                            onClick={() => {
-                                              void handleAiRewrite(item);
-                                            }}
-                                            disabled={isRewriting || aiSavingKey || aiConfigLoading}
-                                          >
-                                            <RetryIcon />
-                                            {isRewriting ? "Trying..." : "Try again"}
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="h-6 px-2 rounded-md text-[10px] font-medium bg-[#2f5168] text-white hover:bg-[#233e50] transition-colors"
-                                            onClick={() => {
-                                              updateLineItem?.(
-                                                item.id,
-                                                "service",
-                                                suggestionForItem
-                                              );
-                                              setAiSuggestion(null);
-                                            }}
-                                          >
-                                            Replace
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {aiError && (
-                                    <div className="text-[12px] text-[#a22f2f] mt-2">
-                                      {aiError}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           ) : (
                             <button
@@ -813,7 +482,6 @@ export default function InvoicePreview({
                               className="w-full text-muted text-left rounded hover:bg-gray-100 transition-colors min-w-0 whitespace-pre-wrap break-words leading-[1.35]"
                               onClick={() => {
                                 setEditingKey(`li-${item.id}-service`);
-                                clearAiUi();
                               }}
                             >
                               {item.service || "Service description"}
@@ -826,7 +494,13 @@ export default function InvoicePreview({
                               type="number"
                               step="0.01"
                               min="0"
-                              className="w-full text-right text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand"
+                              className="justify-self-end w-auto min-w-0 text-right text-dark border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-brand [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              style={{
+                                width: `${Math.max(
+                                  4,
+                                  String(item.hours || "").length || 0
+                                ) + 1}ch`,
+                              }}
                               value={item.hours || ""}
                               onChange={(e) =>
                                 updateLineItem?.(
@@ -845,7 +519,7 @@ export default function InvoicePreview({
                           ) : (
                             <button
                               type="button"
-                              className="text-right text-dark rounded hover:bg-gray-100 transition-colors"
+                              className="justify-self-end inline-flex text-right text-dark rounded hover:bg-gray-100 transition-colors"
                               onClick={() => setEditingKey(`li-${item.id}-hours`)}
                             >
                               {item.hours ? formatHours(item.hours) : "—"}
@@ -869,7 +543,8 @@ export default function InvoicePreview({
                     {addLineItem && isLastPage && (
                       <button
                         type="button"
-                        className="grid grid-cols-[80px_minmax(0,1fr)_56px] gap-3 items-center text-[11px] rounded hover:bg-gray-100 transition-colors text-left"
+                        className="grid gap-3 items-center text-[11px] rounded hover:bg-gray-100 transition-colors text-left"
+                        style={{ gridTemplateColumns: lineItemGridTemplate }}
                         onClick={addLineItem}
                       >
                         <span className="text-brand font-medium">+ Add</span>

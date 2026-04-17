@@ -42,13 +42,12 @@ const COLORS = {
   divider: "#f2f5f9",
 };
 
-const SINGLE_PAGE_CAPACITY = 24;
-const FIRST_MULTI_PAGE_CAPACITY = 32;
-const MIDDLE_PAGE_CAPACITY = 32;
-const LAST_PAGE_CAPACITY = 26;
+const SINGLE_PAGE_CAPACITY = 21;
+const FIRST_MULTI_PAGE_CAPACITY = 27;
+const MIDDLE_PAGE_CAPACITY = 27;
+const LAST_PAGE_CAPACITY = 22;
 const SERVICE_CHARS_PER_LINE = 62;
 const EXTRA_LINE_HEIGHT_WEIGHT = 0.52;
-const MIN_PAGE_FILL_RATIO = 0.68;
 
 function estimateWrappedLineCount(text: string, charsPerLine: number): number {
   const source = text.trim();
@@ -142,10 +141,9 @@ function paginateLineItems<T>(
   for (let pageIndex = 0; pageIndex < pages.length - 1; pageIndex += 1) {
     const currentCapacity =
       pageIndex === 0 ? firstMultiPageCapacity : middlePageCapacity;
-    const minDesiredWeight = currentCapacity * MIN_PAGE_FILL_RATIO;
     let currentWeight = getPageWeight(pages[pageIndex]);
 
-    while (currentWeight < minDesiredWeight && pages[pageIndex + 1].length > 1) {
+    while (pages[pageIndex + 1].length > 1) {
       const nextItem = pages[pageIndex + 1][0];
       const nextWeight = getItemHeightUnits(nextItem);
       if (currentWeight + nextWeight > currentCapacity) {
@@ -183,13 +181,19 @@ const s = StyleSheet.create({
     fontFamily: "Inter",
     color: COLORS.dark,
     paddingTop: 10,
-    paddingBottom: 16,
+    paddingBottom: 80,
     paddingHorizontal: 10,
     flexDirection: "column",
     justifyContent: "space-between",
   },
   pageContinuation: {
     paddingTop: 24,
+  },
+  pageWithoutFooterPadding: {
+    paddingBottom: 40,
+  },
+  pageWithFooterPadding: {
+    paddingBottom: 24,
   },
 
   /* Header */
@@ -425,12 +429,25 @@ export default function InvoicePDF({
       {pagedItems.map((items, pageIndex) => {
         const isFirstPage = pageIndex === 0;
         const isLastPage = pageIndex === pagedItems.length - 1;
+        const hasPagination = pagedItems.length > 1;
 
         return (
           <Page
             key={`invoice-page-${pageIndex}`}
-            size="A4"
-            style={isFirstPage ? s.page : [s.page, s.pageContinuation]}
+            size="LETTER"
+            style={
+              hasPagination
+                ? isFirstPage
+                  ? [s.page, isLastPage ? s.pageWithFooterPadding : s.pageWithoutFooterPadding]
+                  : [
+                      s.page,
+                      s.pageContinuation,
+                      isLastPage ? s.pageWithFooterPadding : s.pageWithoutFooterPadding,
+                    ]
+                : isFirstPage
+                  ? s.page
+                  : [s.page, s.pageContinuation]
+            }
           >
             <View>
               {isFirstPage && (

@@ -10,12 +10,6 @@ import { ClientModal, ClientPicker } from "./components/ClientSelector";
 import CompanySettingsModal from "./components/CompanySettingsModal";
 import InvoiceForm from "./components/InvoiceForm";
 import InvoicePreview from "./components/InvoicePreview";
-import {
-  DEFAULT_MINIMAX_MODEL,
-  fetchAiConfig,
-  fetchAiConfigSecret,
-  saveAiConfig,
-} from "./hooks/useAiRewrite";
 import { useCompanySettings } from "./hooks/useCompanySettings";
 import { createDefaultInvoice, useInvoiceState } from "./hooks/useInvoiceState";
 import { useClients } from "./hooks/useClients";
@@ -24,6 +18,14 @@ import { useToggl } from "./hooks/useToggl";
 import { resolveAssetUrl } from "./utils/assets";
 import { exportPdf } from "./utils/exportPdf";
 import type { Client, CompanySettings, InvoiceRecord } from "./types";
+
+const PREVIEW_ZOOM_MIN = 0.6;
+const PREVIEW_ZOOM_MAX = 1.8;
+const PREVIEW_ZOOM_STEP = 0.1;
+
+function clampPreviewZoom(value: number): number {
+  return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, value));
+}
 
 function PencilIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -96,10 +98,6 @@ export default function App() {
   const [deletingInvoice, setDeletingInvoice] = useState(false);
   const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
   const [companySettingsSaving, setCompanySettingsSaving] = useState(false);
-  const [initialMinimaxApiKey, setInitialMinimaxApiKey] = useState("");
-  const [initialMinimaxModel, setInitialMinimaxModel] = useState(
-    DEFAULT_MINIMAX_MODEL
-  );
   const [clearEntriesConfirmOpen, setClearEntriesConfirmOpen] = useState(false);
   const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(null);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
@@ -114,6 +112,7 @@ export default function App() {
   const [dragOverInvoiceId, setDragOverInvoiceId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [secondaryPanelCollapsed, setSecondaryPanelCollapsed] = useState(false);
+  const [previewScale, setPreviewScale] = useState(1);
   const lastSavedSnapshotRef = useRef("");
   const autoSaveSeqRef = useRef(0);
 
@@ -123,6 +122,7 @@ export default function App() {
     addLineItem,
     removeLineItem,
     updateLineItem,
+    finalizeLineItemDate,
     totalHours,
     resetInvoice,
     loadInvoice,
@@ -443,32 +443,15 @@ export default function App() {
 
   const openCompanySettings = useCallback(() => {
     setCompanySettingsOpen(true);
-    void (async () => {
-      try {
-        const [apiKey, aiConfig] = await Promise.all([
-          fetchAiConfigSecret(),
-          fetchAiConfig(),
-        ]);
-        setInitialMinimaxApiKey(apiKey);
-        setInitialMinimaxModel(aiConfig.model || DEFAULT_MINIMAX_MODEL);
-      } catch {
-        setInitialMinimaxApiKey("");
-        setInitialMinimaxModel(DEFAULT_MINIMAX_MODEL);
-      }
-    })();
   }, []);
 
   const handleSaveCompanySettings = useCallback(
     async ({
       settings,
       togglApiToken,
-      minimaxApiKey,
-      minimaxModel,
     }: {
       settings: CompanySettings;
       togglApiToken: string;
-      minimaxApiKey: string;
-      minimaxModel: string;
     }) => {
       setCompanySettingsSaving(true);
       try {
@@ -481,30 +464,12 @@ export default function App() {
           }
         }
 
-        const nextApiKey = minimaxApiKey.trim();
-        const nextModel = minimaxModel.trim() || DEFAULT_MINIMAX_MODEL;
-        const aiChanged =
-          nextApiKey !== initialMinimaxApiKey || nextModel !== initialMinimaxModel;
-        if (aiChanged) {
-          if (!nextApiKey) {
-            throw new Error("MiniMax API key is required.");
-          }
-          const saved = await saveAiConfig(nextApiKey, { model: nextModel });
-          setInitialMinimaxApiKey(nextApiKey);
-          setInitialMinimaxModel(saved.model || nextModel);
-        }
-
         setCompanySettingsOpen(false);
       } finally {
         setCompanySettingsSaving(false);
       }
     },
-    [
-      initialMinimaxApiKey,
-      initialMinimaxModel,
-      saveCompanySettings,
-      toggl,
-    ]
+    [saveCompanySettings, toggl]
   );
 
   useEffect(() => {
@@ -784,7 +749,7 @@ export default function App() {
         <div className="flex-1 flex flex-col overflow-hidden relative bg-[#e6e6e6]">
           <div className="flex-1 overflow-auto p-8 flex flex-col items-center bg-[#f0f0f0]">
           {selectedClient && isInvoiceOpen && (
-            <div className="w-[595px] mb-4 flex justify-center">
+            <div className="w-[595px] mb-4 flex items-center justify-between">
               <div
                 className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] border ${
                   invoiceSaveStatus === "saving"
@@ -813,20 +778,62 @@ export default function App() {
                       : "All changes saved"}
                 </span>
               </div>
+              <div className="inline-flex items-center gap-1 rounded-full border border-[#d1d8d3] bg-white/92 px-1 py-1 text-[10px] text-[#415049] shadow-sm">
+                <button
+                  type="button"
+                  className="h-6 w-6 rounded-full hover:bg-[#edf2ef] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  onClick={() =>
+                    setPreviewScale((prev) =>
+                      clampPreviewZoom(Number((prev - PREVIEW_ZOOM_STEP).toFixed(2)))
+                    )
+                  }
+                  disabled={previewScale <= PREVIEW_ZOOM_MIN}
+                  aria-label="Zoom out preview"
+                  title="Zoom out"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="h-6 min-w-[52px] rounded-full px-2 hover:bg-[#edf2ef] transition-colors"
+                  onClick={() => setPreviewScale(1)}
+                  aria-label="Reset preview zoom"
+                  title="Reset zoom"
+                >
+                  {Math.round(previewScale * 100)}%
+                </button>
+                <button
+                  type="button"
+                  className="h-6 w-6 rounded-full hover:bg-[#edf2ef] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  onClick={() =>
+                    setPreviewScale((prev) =>
+                      clampPreviewZoom(Number((prev + PREVIEW_ZOOM_STEP).toFixed(2)))
+                    )
+                  }
+                  disabled={previewScale >= PREVIEW_ZOOM_MAX}
+                  aria-label="Zoom in preview"
+                  title="Zoom in"
+                >
+                  +
+                </button>
+              </div>
             </div>
           )}
           {selectedClient && isInvoiceOpen ? (
-            <InvoicePreview
-              invoice={invoice}
-              client={selectedClient}
-              companySettings={companySettings}
-              totalHours={totalHours}
-              balanceDue={balanceDue}
-              updateField={updateField}
-              addLineItem={addLineItem}
-              removeLineItem={removeLineItem}
-              updateLineItem={updateLineItem}
-            />
+            <div style={{ zoom: previewScale }}>
+              <InvoicePreview
+                invoice={invoice}
+                client={selectedClient}
+                companySettings={companySettings}
+                totalHours={totalHours}
+                balanceDue={balanceDue}
+                updateField={updateField}
+                addLineItem={addLineItem}
+                removeLineItem={removeLineItem}
+                updateLineItem={updateLineItem}
+                finalizeLineItemDate={finalizeLineItemDate}
+              />
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
               Select or create a client to preview the invoice
@@ -896,8 +903,6 @@ export default function App() {
         saving={companySettingsSaving}
         initialSettings={companySettings}
         initialTogglToken={toggl.config.apiToken}
-        initialMinimaxApiKey={initialMinimaxApiKey}
-        initialMinimaxModel={initialMinimaxModel}
         onClose={() => setCompanySettingsOpen(false)}
         onSave={handleSaveCompanySettings}
       />

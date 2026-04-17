@@ -15,6 +15,44 @@ function normalizeLineItems(items: LineItem[]): LineItem[] {
   return items;
 }
 
+function parseIsoDateToUtcTimestamp(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const utc = Date.UTC(year, month - 1, day);
+  const parsed = new Date(utc);
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return utc;
+}
+
+function sortLineItemsByDate(items: LineItem[]): LineItem[] {
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      timestamp: parseIsoDateToUtcTimestamp(item.date),
+    }))
+    .sort((a, b) => {
+      const aHasDate = a.timestamp !== null;
+      const bHasDate = b.timestamp !== null;
+      if (aHasDate && bHasDate) {
+        const aTimestamp = a.timestamp as number;
+        const bTimestamp = b.timestamp as number;
+        if (aTimestamp !== bTimestamp) return aTimestamp - bTimestamp;
+        return a.index - b.index;
+      }
+      if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.item);
+}
+
 export function createDefaultInvoice(
   clientId: string,
   serviceMonth?: string,
@@ -78,6 +116,19 @@ export function useInvoiceState(clientId: string) {
     []
   );
 
+  const finalizeLineItemDate = useCallback((id: string) => {
+    setInvoice((prev) => {
+      const editedItem = prev.lineItems.find((item) => item.id === id);
+      if (!editedItem || parseIsoDateToUtcTimestamp(editedItem.date) === null) {
+        return prev;
+      }
+      return {
+        ...prev,
+        lineItems: sortLineItemsByDate(prev.lineItems),
+      };
+    });
+  }, []);
+
   const totalHours = useMemo(
     () => invoice.lineItems.reduce((sum, item) => sum + (item.hours || 0), 0),
     [invoice.lineItems]
@@ -113,6 +164,7 @@ export function useInvoiceState(clientId: string) {
     addLineItem,
     removeLineItem,
     updateLineItem,
+    finalizeLineItemDate,
     totalHours,
     resetInvoice,
     loadInvoice,

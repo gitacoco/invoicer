@@ -8,10 +8,20 @@ const DEFAULT_COLOR = "#006b51";
 interface ModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (draft: Omit<Client, "id">) => Client;
+  onAdd: (draft: Omit<Client, "id"> & { id?: string }) => Client;
   onCreated: (client: Client) => void;
   onUpdate?: (id: string, partial: Partial<Omit<Client, "id">>) => void;
   editClient?: Client | null;
+}
+
+function toSemanticClientId(input: string): string {
+  const clean = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+  return clean || "client";
 }
 
 export function ClientModal({
@@ -23,6 +33,8 @@ export function ClientModal({
   editClient,
 }: ModalProps) {
   const [name, setName] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientIdTouched, setClientIdTouched] = useState(false);
   const [address, setAddress] = useState("");
   const [themeColor, setThemeColor] = useState(DEFAULT_COLOR);
   const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>();
@@ -36,6 +48,8 @@ export function ClientModal({
   useEffect(() => {
     if (editClient) {
       setName(editClient.name);
+      setClientId(editClient.id);
+      setClientIdTouched(true);
       setAddress(editClient.address);
       setThemeColor(editClient.themeColor);
       setLogoDataUrl(editClient.logoDataUrl);
@@ -43,6 +57,8 @@ export function ClientModal({
       setNetTerms(editClient.netTerms);
     } else {
       setName("");
+      setClientId("");
+      setClientIdTouched(false);
       setAddress("");
       setThemeColor(DEFAULT_COLOR);
       setLogoDataUrl(undefined);
@@ -63,6 +79,7 @@ export function ClientModal({
 
   function handleSubmit() {
     if (!name.trim()) return;
+    const normalizedId = toSemanticClientId(clientId || name);
     if (isEdit && onUpdate) {
       onUpdate(editClient.id, {
         name: name.trim(),
@@ -75,6 +92,7 @@ export function ClientModal({
       onClose();
     } else {
       const client = onAdd({
+        id: normalizedId,
         name: name.trim(),
         address: address.trim(),
         themeColor,
@@ -83,6 +101,8 @@ export function ClientModal({
         netTerms,
       });
       setName("");
+      setClientId("");
+      setClientIdTouched(false);
       setAddress("");
       setThemeColor(DEFAULT_COLOR);
       setLogoDataUrl(undefined);
@@ -111,11 +131,41 @@ export function ClientModal({
           <input
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              const nextName = e.target.value;
+              setName(nextName);
+              if (!clientIdTouched) {
+                setClientId(toSemanticClientId(nextName));
+              }
+            }}
             placeholder="e.g. Acme Consulting"
             autoFocus
           />
         </label>
+
+        {isEdit ? (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Client ID</span>
+            <input
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
+              value={clientId}
+              disabled
+            />
+          </label>
+        ) : (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Client ID *</span>
+            <input
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/30 font-mono"
+              value={clientId}
+              onChange={(e) => {
+                setClientIdTouched(true);
+                setClientId(toSemanticClientId(e.target.value));
+              }}
+              placeholder="e.g. acme-consulting"
+            />
+          </label>
+        )}
 
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-gray-500">Address</span>

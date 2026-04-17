@@ -69,22 +69,44 @@ async function persistClientsToRepo(clients: Client[]): Promise<void> {
   }
 }
 
-let nextId = 1;
-function generateClientId(): string {
-  return `client-${Date.now()}-${nextId++}`;
+function slugifyClientId(input: string): string {
+  const clean = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+  return clean || "client";
+}
+
+function makeUniqueClientId(base: string, existingIds: Set<string>): string {
+  if (!existingIds.has(base)) return base;
+  let idx = 2;
+  while (existingIds.has(`${base}-${idx}`)) idx += 1;
+  return `${base}-${idx}`;
 }
 
 export function useClients() {
   const [clients, setClients] = useState<Client[]>(loadClientsFromRepo);
 
-  const addClient = useCallback((draft: Omit<Client, "id">): Client => {
-    const client: Client = { ...draft, id: generateClientId() };
+  const addClient = useCallback((draft: Omit<Client, "id"> & { id?: string }): Client => {
+    const baseId = slugifyClientId(draft.id ?? draft.name);
+    let created: Client | null = null;
     setClients((prev) => {
+      const id = makeUniqueClientId(
+        baseId,
+        new Set(prev.map((client) => client.id))
+      );
+      const client: Client = {
+        ...draft,
+        id,
+      };
+      created = client;
       const next = [...prev, client];
       void persistClientsToRepo(next);
       return next;
     });
-    return client;
+    return created ?? { ...draft, id: baseId };
   }, []);
 
   const updateClient = useCallback(
