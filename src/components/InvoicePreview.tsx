@@ -9,6 +9,7 @@ import {
   servicePeriodEnd,
 } from "../utils/format";
 import { resolveAssetUrl } from "../utils/assets";
+import { paginateInvoiceLineItems } from "../utils/invoiceLineItemPagination";
 
 interface Props {
   invoice: InvoiceData;
@@ -38,12 +39,6 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 
-const SINGLE_PAGE_CAPACITY = 21;
-const FIRST_MULTI_PAGE_CAPACITY = 27;
-const MIDDLE_PAGE_CAPACITY = 27;
-const LAST_PAGE_CAPACITY = 22;
-const SERVICE_CHARS_PER_LINE = 62;
-const EXTRA_LINE_HEIGHT_WEIGHT = 0.52;
 const LETTER_PAGE_WIDTH = 612;
 const LETTER_PAGE_HEIGHT = 792;
 
@@ -53,120 +48,6 @@ function getHoursColumnWidth(items: LineItem[]): string {
     0
   );
   return `calc(${Math.max(4, maxValueChars)}ch + 4px)`;
-}
-
-function estimateWrappedLineCount(text: string, charsPerLine: number): number {
-  const source = text.trim();
-  if (!source) return 1;
-
-  const charVisualWidth = (char: string): number => {
-    if (/[\u2E80-\uA4CF\uAC00-\uD7AF\uF900-\uFAFF\uFE10-\uFE6F\uFF00-\uFFEF]/.test(char)) {
-      return 1.8;
-    }
-    if (/\s/.test(char)) return 0.6;
-    return 1;
-  };
-
-  const measureLine = (line: string) =>
-    Array.from(line).reduce((sum, char) => sum + charVisualWidth(char), 0);
-
-  return source.split("\n").reduce((sum, line) => {
-    const normalizedLine = line.trim();
-    if (!normalizedLine) return sum + 1;
-    const visualWidth = measureLine(normalizedLine);
-    return sum + Math.max(1, Math.ceil(visualWidth / charsPerLine));
-  }, 0);
-}
-
-function estimateLineItemHeightUnits(item: LineItem): number {
-  const serviceLineCount = estimateWrappedLineCount(
-    item.service || "",
-    SERVICE_CHARS_PER_LINE
-  );
-  return 1 + (serviceLineCount - 1) * EXTRA_LINE_HEIGHT_WEIGHT;
-}
-
-function paginateLineItems<T>(
-  items: T[],
-  getItemHeightUnits: (item: T) => number,
-  singlePageCapacity: number,
-  firstMultiPageCapacity: number,
-  middlePageCapacity: number,
-  lastPageCapacity: number
-): T[][] {
-  if (items.length === 0) return [[]];
-
-  const weights = items.map(getItemHeightUnits);
-  const prefixSums = [0];
-  for (const weight of weights) {
-    prefixSums.push(prefixSums[prefixSums.length - 1] + weight);
-  }
-
-  const sumRange = (start: number, end: number) => prefixSums[end] - prefixSums[start];
-
-  if (sumRange(0, items.length) <= singlePageCapacity) return [items];
-
-  const pages: T[][] = [];
-  let cursor = 0;
-
-  while (cursor < items.length) {
-    const capacity = pages.length === 0 ? firstMultiPageCapacity : middlePageCapacity;
-    let end = cursor;
-    let used = 0;
-
-    while (end < items.length) {
-      const nextWeight = weights[end];
-      if (used + nextWeight > capacity && end > cursor) break;
-
-      used += nextWeight;
-      end += 1;
-
-      const remaining = sumRange(end, items.length);
-      if (remaining > 0 && remaining <= lastPageCapacity) {
-        break;
-      }
-    }
-
-    if (end === cursor) {
-      end = cursor + 1;
-    }
-
-    pages.push(items.slice(cursor, end));
-    cursor = end;
-
-    const remaining = sumRange(cursor, items.length);
-    if (remaining > 0 && remaining <= lastPageCapacity) {
-      pages.push(items.slice(cursor));
-      break;
-    }
-  }
-
-  const getPageWeight = (pageItems: T[]) =>
-    pageItems.reduce((sum, pageItem) => sum + getItemHeightUnits(pageItem), 0);
-
-  for (let pageIndex = 0; pageIndex < pages.length - 1; pageIndex += 1) {
-    const currentCapacity =
-      pageIndex === 0 ? firstMultiPageCapacity : middlePageCapacity;
-    let currentWeight = getPageWeight(pages[pageIndex]);
-
-    while (pages[pageIndex + 1].length > 1) {
-      const nextItem = pages[pageIndex + 1][0];
-      const nextWeight = getItemHeightUnits(nextItem);
-      if (currentWeight + nextWeight > currentCapacity) {
-        break;
-      }
-      pages[pageIndex].push(nextItem);
-      pages[pageIndex + 1].shift();
-      currentWeight += nextWeight;
-    }
-
-    if (pages[pageIndex + 1].length === 0) {
-      pages.splice(pageIndex + 1, 1);
-      pageIndex -= 1;
-    }
-  }
-
-  return pages;
 }
 
 export default function InvoicePreview({
@@ -197,18 +78,12 @@ export default function InvoicePreview({
   const lineItemGridTemplate = `80px minmax(0,1fr) ${getHoursColumnWidth(
     visibleItems
   )}`;
-  const pagedItems = paginateLineItems(
-    visibleItems,
-    estimateLineItemHeightUnits,
-    SINGLE_PAGE_CAPACITY,
-    FIRST_MULTI_PAGE_CAPACITY,
-    MIDDLE_PAGE_CAPACITY,
-    LAST_PAGE_CAPACITY
-  );
+  const pagedItems = paginateInvoiceLineItems(visibleItems);
   const companyNameLines = companySettings.companyName
     .replace(/Example Studio(?!\n)/, "Example Studio\n")
     .split("\n")
-    .filter((line) => line.trim());
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
 
@@ -623,7 +498,8 @@ export default function InvoicePreview({
                       <div className="text-[10px] text-dark">
                         {companySettings.companyAddress
                           .split("\n")
-                          .filter((line) => line.trim())
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
                           .map((line, idx) => (
                             <div key={`${line}-${idx}`}>{line}</div>
                           ))}
@@ -668,7 +544,8 @@ export default function InvoicePreview({
                           <div className="text-dark">
                             {companySettings.bankAddress
                               .split("\n")
-                              .filter((line) => line.trim())
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
                               .map((line, idx) => (
                                 <div key={`${line}-${idx}`}>{line}</div>
                               ))}
