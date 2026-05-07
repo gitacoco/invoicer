@@ -144,9 +144,10 @@ export function useInvoiceState(clientId: string) {
   );
 
   const loadInvoice = useCallback((data: InvoiceData) => {
+    const normalizedLineItems = normalizeLineItems(data.lineItems);
     setInvoice({
       ...data,
-      lineItems: normalizeLineItems(data.lineItems),
+      lineItems: sortLineItemsByDate(normalizedLineItems),
     });
   }, []);
 
@@ -154,7 +155,7 @@ export function useInvoiceState(clientId: string) {
   const mergeLineItems = useCallback((newItems: LineItem[]) => {
     setInvoice((prev) => ({
       ...prev,
-      lineItems: [...prev.lineItems, ...newItems],
+      lineItems: sortLineItemsByDate([...prev.lineItems, ...newItems]),
     }));
   }, []);
 

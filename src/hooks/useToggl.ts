@@ -4,6 +4,7 @@ import type { TogglConfig, TogglClient, TogglTimeEntry, LineItem } from "../type
 const STORAGE_KEY = "invoicer-toggl";
 // Use Vite dev proxy to avoid CORS; in production you'd need your own proxy
 const BASE_URL = "/toggl-api/api/v9";
+const TOGGL_TIME_ZONE = "America/Los_Angeles";
 
 const ENV_TOKEN = import.meta.env.VITE_TOGGL_API_TOKEN as string | undefined;
 
@@ -41,15 +42,105 @@ export interface AggregatedEntry {
   descriptions: string[];
 }
 
-function toLocalDateKey(dateTime: string): string {
+const TOGGL_TZ_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: TOGGL_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  hourCycle: "h23",
+});
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function getTogglTimeZoneParts(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const parts: Partial<Record<"year" | "month" | "day" | "hour" | "minute" | "second", number>> =
+    {};
+
+  for (const part of TOGGL_TZ_FORMATTER.formatToParts(date)) {
+    if (
+      part.type === "year" ||
+      part.type === "month" ||
+      part.type === "day" ||
+      part.type === "hour" ||
+      part.type === "minute" ||
+      part.type === "second"
+    ) {
+      parts[part.type] = Number(part.value);
+    }
+  }
+
+  return {
+    year: parts.year ?? 0,
+    month: parts.month ?? 1,
+    day: parts.day ?? 1,
+    hour: parts.hour ?? 0,
+    minute: parts.minute ?? 0,
+    second: parts.second ?? 0,
+  };
+}
+
+/**
+ * Convert a clock time in `TOGGL_TIME_ZONE` into an exact UTC instant.
+ * Iteration handles daylight-saving transitions around midnight boundaries.
+ */
+function timeZoneDateTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0
+): Date {
+  const target = Date.UTC(year, month - 1, day, hour, minute, second);
+  let candidate = target;
+
+  for (let i = 0; i < 4; i++) {
+    const localParts = getTogglTimeZoneParts(new Date(candidate));
+    const represented = Date.UTC(
+      localParts.year,
+      localParts.month - 1,
+      localParts.day,
+      localParts.hour,
+      localParts.minute,
+      localParts.second
+    );
+    const diff = target - represented;
+    if (diff === 0) return new Date(candidate);
+    candidate += diff;
+  }
+
+  return new Date(candidate);
+}
+
+function toTogglApiBoundaryTimestamp(year: number, month: number, day: number): string {
+  const utc = timeZoneDateTimeToUtc(year, month, day, 0, 0, 0);
+  return utc.toISOString();
+}
+
+function toTogglDateKey(dateTime: string): string {
   const d = new Date(dateTime);
   if (Number.isNaN(d.getTime())) {
     return dateTime.slice(0, 10);
   }
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  const parts = getTogglTimeZoneParts(d);
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+
+function isWithinServicePeriod(dateKey: string, startKey: string, endKey: string): boolean {
+  return dateKey >= startKey && dateKey <= endKey;
 }
 
 /** Group raw Toggl entries by day into one importable row per date. */
@@ -58,7 +149,7 @@ function aggregateByDate(entries: TogglTimeEntry[]): AggregatedEntry[] {
 
   for (const e of entries) {
     if (e.duration < 0) continue; // skip running timers
-    const date = toLocalDateKey(e.start);
+    const date = toTogglDateKey(e.start);
     const existing = map.get(date);
 
     if (existing) {
@@ -178,10 +269,18 @@ export function useToggl() {
         const [startYear, startMonth] = serviceMonth.split("-").map(Number);
         const rangeEnd = serviceMonthEnd || serviceMonth;
         const [endYear, endMonth] = rangeEnd.split("-").map(Number);
-        const startDate = `${startYear}-${String(startMonth).padStart(2, "0")}-01`;
-        // End date is exclusive in Toggl API: first day of month after range end.
+        const startKey = `${startYear}-${pad2(startMonth)}-01`;
+        const endDay = new Date(endYear, endMonth, 0).getDate();
+        const endInclusiveKey = `${rangeEnd}-${pad2(endDay)}`;
+
+        // Query Toggl using explicit RFC3339 boundaries aligned to LA local midnight.
+        const startDate = toTogglApiBoundaryTimestamp(startYear, startMonth, 1);
         const nextMonth = new Date(endYear, endMonth, 1);
-        const endDate = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-${String(nextMonth.getDate()).padStart(2, "0")}`;
+        const endDate = toTogglApiBoundaryTimestamp(
+          nextMonth.getFullYear(),
+          nextMonth.getMonth() + 1,
+          nextMonth.getDate()
+        );
 
         const params = new URLSearchParams({
           start_date: startDate,
@@ -223,7 +322,11 @@ export function useToggl() {
           }
         }
 
-        const rows = aggregateByDate(filtered);
+        const periodAligned = filtered.filter((e) =>
+          isWithinServicePeriod(toTogglDateKey(e.start), startKey, endInclusiveKey)
+        );
+
+        const rows = aggregateByDate(periodAligned);
         setPendingEntries(rows);
         setHasFetched(true);
       } catch {
