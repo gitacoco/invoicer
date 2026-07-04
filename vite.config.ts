@@ -4,38 +4,12 @@ import tailwindcss from "@tailwindcss/vite";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const AI_CONFIG_FILE = path.join(".invoicer", "ai.config.local");
 const INVOICES_DB_FILE = path.join(".invoicer", "db", "invoices.json");
 const COMPANY_SETTINGS_FILE = path.join(
   ".invoicer",
   "db",
   "company-settings.json"
 );
-const DEFAULT_AI_BASE_URL = "https://api.minimax.io/v1";
-const DEFAULT_AI_MODEL = "MiniMax-M2.1-highspeed";
-const MINIMAX_MODEL_FALLBACK_ORDER = [
-  "MiniMax-M2.1",
-  "MiniMax-M2.5-highspeed",
-  "MiniMax-M2.5",
-  "MiniMax-M2",
-] as const;
-const REWRITE_MAX_COMPLETION_TOKENS = 320;
-const REWRITE_RETRY_MAX_COMPLETION_TOKENS = 800;
-const REWRITE_FINAL_MAX_COMPLETION_TOKENS = 1200;
-
-interface LocalAiConfig {
-  provider: "minimax";
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-}
-
-interface PublicAiConfig {
-  provider: "minimax";
-  hasApiKey: boolean;
-  baseUrl: string;
-  model: string;
-}
 
 interface StoredInvoiceRecord {
   id: string;
@@ -270,17 +244,6 @@ function reorderClientInvoices(
   };
 }
 
-function normalizeText(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  return trimmed || fallback;
-}
-
-function normalizeBaseUrl(value: unknown): string {
-  const raw = normalizeText(value, DEFAULT_AI_BASE_URL);
-  return raw.replace(/\/+$/, "");
-}
-
 function readBody(req: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -288,36 +251,6 @@ function readBody(req: NodeJS.ReadableStream): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
-}
-
-function toLocalAiConfig(raw: unknown): LocalAiConfig | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const apiKey = typeof obj.apiKey === "string" ? obj.apiKey.trim() : "";
-  if (!apiKey) return null;
-  return {
-    provider: "minimax",
-    apiKey,
-    baseUrl: normalizeBaseUrl(obj.baseUrl),
-    model: normalizeText(obj.model, DEFAULT_AI_MODEL),
-  };
-}
-
-async function readAiConfig(root: string): Promise<LocalAiConfig | null> {
-  const abs = path.resolve(root, AI_CONFIG_FILE);
-  try {
-    const raw = await fs.readFile(abs, "utf8");
-    return toLocalAiConfig(JSON.parse(raw));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-async function writeAiConfig(root: string, config: LocalAiConfig): Promise<void> {
-  const abs = path.resolve(root, AI_CONFIG_FILE);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 async function readInvoicesDb(root: string): Promise<InvoicesDb> {
@@ -366,402 +299,6 @@ async function writeCompanySettings(
   await fs.writeFile(abs, JSON.stringify(settings, null, 2) + "\n", "utf8");
 }
 
-function toPublicAiConfig(config: LocalAiConfig | null): PublicAiConfig {
-  return {
-    provider: "minimax",
-    hasApiKey: Boolean(config?.apiKey),
-    baseUrl: config?.baseUrl ?? DEFAULT_AI_BASE_URL,
-    model: config?.model ?? DEFAULT_AI_MODEL,
-  };
-}
-
-function extractErrorMessage(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
-  const error = obj.error;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    const maybe = (error as Record<string, unknown>).message;
-    if (typeof maybe === "string") return maybe;
-  }
-  const message = obj.message;
-  if (typeof message === "string") return message;
-  return null;
-}
-
-function extractRequestId(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
-  const requestId = obj.request_id;
-  return typeof requestId === "string" && requestId.trim()
-    ? requestId.trim()
-    : null;
-}
-
-function formatUpstreamError(
-  payload: unknown,
-  rawBody: string,
-  statusCode: number,
-  requestIdHeader: string | null
-): string {
-  const msg =
-    extractErrorMessage(payload) || rawBody.slice(0, 160) || `HTTP ${statusCode}`;
-  const requestId = extractRequestId(payload) || requestIdHeader;
-  const isBalanceError =
-    statusCode === 429 &&
-    (msg.includes("1008") || msg.toLowerCase().includes("insufficient balance"));
-  const balanceHint = isBalanceError
-    ? " Hint: this key's billing bucket has no quota now. If this is a Coding Plan key, check active subscription and 5-hour prompt quota; if it's Pay-as-you-go, check balance under the same key/account."
-    : "";
-  return requestId
-    ? `${msg}${balanceHint} (request_id: ${requestId})`
-    : `${msg}${balanceHint}`;
-}
-
-function extractAssistantText(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
-  const asTrimmed = (value: unknown): string | null => {
-    if (typeof value !== "string") return null;
-    const trimmed = value.trim();
-    return trimmed || null;
-  };
-
-  const isReasoningRecord = (value: unknown): boolean => {
-    if (!value || typeof value !== "object") return false;
-    const record = value as Record<string, unknown>;
-    const type = asTrimmed(record.type)?.toLowerCase() ?? "";
-    const role = asTrimmed(record.role)?.toLowerCase() ?? "";
-    return (
-      type.includes("reason") ||
-      type.includes("think") ||
-      role.includes("reason") ||
-      "reasoning_content" in record ||
-      "thinking" in record
-    );
-  };
-
-  const fromContent = (content: unknown): string | null => {
-    const direct = asTrimmed(content);
-    if (direct) return direct;
-    if (Array.isArray(content)) {
-      const joined = content
-        .map((part) => {
-          if (typeof part === "string") return part;
-          if (part && typeof part === "object") {
-            const record = part as Record<string, unknown>;
-            if (isReasoningRecord(record)) return "";
-            return (
-              asTrimmed(record.output_text) ||
-              asTrimmed(record.text) ||
-              asTrimmed(record.content) ||
-              ""
-            );
-          }
-          return "";
-        })
-        .join("")
-        .trim();
-      return joined || null;
-    }
-    if (content && typeof content === "object") {
-      const record = content as Record<string, unknown>;
-      if (isReasoningRecord(record)) return null;
-      return (
-        asTrimmed(record.output_text) ||
-        asTrimmed(record.text) ||
-        asTrimmed(record.content)
-      );
-    }
-    return null;
-  };
-
-  const firstChoice = Array.isArray(obj.choices) ? obj.choices[0] : undefined;
-  const firstChoiceRecord =
-    firstChoice && typeof firstChoice === "object"
-      ? (firstChoice as Record<string, unknown>)
-      : null;
-  const message =
-    firstChoiceRecord?.message && typeof firstChoiceRecord.message === "object"
-      ? (firstChoiceRecord.message as Record<string, unknown>)
-      : null;
-
-  const candidates: Array<string | null> = [
-    fromContent(message?.content),
-    asTrimmed(message?.text),
-    asTrimmed(firstChoiceRecord?.text),
-    fromContent(firstChoiceRecord?.content),
-    asTrimmed(obj.output_text),
-    asTrimmed(obj.reply),
-    asTrimmed(obj.text),
-  ];
-
-  const dataObj =
-    obj.data && typeof obj.data === "object"
-      ? (obj.data as Record<string, unknown>)
-      : null;
-  if (dataObj) {
-    const nestedChoice = Array.isArray(dataObj.choices) ? dataObj.choices[0] : undefined;
-    const nestedChoiceRecord =
-      nestedChoice && typeof nestedChoice === "object"
-        ? (nestedChoice as Record<string, unknown>)
-        : null;
-    const nestedMessage =
-      nestedChoiceRecord?.message &&
-      typeof nestedChoiceRecord.message === "object"
-        ? (nestedChoiceRecord.message as Record<string, unknown>)
-        : null;
-    candidates.push(fromContent(nestedMessage?.content));
-    candidates.push(asTrimmed(nestedMessage?.text));
-    candidates.push(asTrimmed(nestedChoiceRecord?.text));
-    candidates.push(asTrimmed(dataObj.output_text));
-    candidates.push(asTrimmed(dataObj.reply));
-    candidates.push(asTrimmed(dataObj.text));
-  }
-
-  return candidates.find((c): c is string => Boolean(c)) ?? null;
-}
-
-function sanitizeRewriteOutput(text: string): string {
-  return text
-    .replace(/<think>[\s\S]*?(<\/think>|$)/gi, " ")
-    .replace(/<\/?think>/gi, " ")
-    .trim();
-}
-
-function isReasoningOverflowResponse(payload: unknown): boolean {
-  if (!payload || typeof payload !== "object") return false;
-  const obj = payload as Record<string, unknown>;
-  const choice0 = Array.isArray(obj.choices) ? obj.choices[0] : null;
-  const finishReason =
-    choice0 && typeof choice0 === "object"
-      ? (choice0 as Record<string, unknown>).finish_reason
-      : null;
-  const usage =
-    obj.usage && typeof obj.usage === "object"
-      ? (obj.usage as Record<string, unknown>)
-      : null;
-  const completionTokens =
-    usage && typeof usage.completion_tokens === "number"
-      ? usage.completion_tokens
-      : null;
-  const details =
-    usage?.completion_tokens_details &&
-    typeof usage.completion_tokens_details === "object"
-      ? (usage.completion_tokens_details as Record<string, unknown>)
-      : null;
-  const reasoningTokens =
-    details && typeof details.reasoning_tokens === "number"
-      ? details.reasoning_tokens
-      : null;
-
-  return (
-    finishReason === "length" &&
-    completionTokens !== null &&
-    reasoningTokens !== null &&
-    completionTokens > 0 &&
-    completionTokens === reasoningTokens
-  );
-}
-
-function isModelNotSupportedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return (
-    /\b2061\b/.test(msg) ||
-    msg.includes("not support model") ||
-    msg.includes("unsupported model")
-  );
-}
-
-async function callMinimaxChat(
-  config: LocalAiConfig,
-  text: string,
-  strict: boolean,
-  modelOverride?: string,
-  maxCompletionTokens = REWRITE_MAX_COMPLETION_TOKENS,
-  promptMode: "default" | "final_only" = "default"
-): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  let response: Response | null = null;
-  try {
-    response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: modelOverride ?? config.model,
-        reasoning_split: true,
-        temperature: strict ? 0 : 0.2,
-        max_completion_tokens: maxCompletionTokens,
-        messages: [
-          {
-            role: "system",
-            content: strict
-              ? promptMode === "final_only"
-                ? "Return one final invoice line only. No reasoning. No tags. No markdown. Output plain text only."
-                : "Rewrite invoice service descriptions. Return exactly one concise plain-text line in this format: <PastTenseVerb> <NounPhrase>. The first word MUST be a past-tense action verb (for example: Designed, Reviewed, Coordinated, Resolved, Completed, Met). The tone MUST be professional and suitable for a consulting agency service list on an invoice. Choose the most appropriate action verb from the task context and do not default to 'Delivered' unless actual delivery is explicitly described. Never copy the input verbatim. Keep factual meaning. Output line text only with no <think> tags, reasoning, markdown, bullets, labels, or explanations."
-              : promptMode === "final_only"
-              ? "Return one concise invoice line only. Output plain text only."
-              : "Rewrite invoice service descriptions into exactly one concise plain-text line in this format: <PastTenseVerb> <NounPhrase>. Start with one past-tense action verb, then the task noun phrase. Use a professional consulting agency service-list tone suitable for invoice line items. Choose a context-appropriate verb and avoid defaulting to 'Delivered' unless delivery is explicitly mentioned. Never copy the input verbatim. Keep factual meaning. No markdown, bullets, options, labels, or explanations.",
-          },
-          {
-            role: "user",
-            content: strict
-              ? promptMode === "final_only"
-                ? `Service description: ${text}\nReturn final output only.`
-                : `Rewrite this service description into one invoice line only: ${text}`
-              : promptMode === "final_only"
-              ? `Service description: ${text}\nReturn final output only.`
-              : `Rewrite this service description into one invoice line: ${text}`,
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!response) {
-    throw new Error("MiniMax request failed before receiving a response.");
-  }
-
-  const rawBody = await response.text();
-  let payload: unknown = null;
-  try {
-    payload = JSON.parse(rawBody);
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const requestIdHeader = response.headers.get("x-minimax-request-id");
-    const upstreamError = formatUpstreamError(
-      payload,
-      rawBody,
-      response.status,
-      requestIdHeader
-    );
-    throw new Error(`MiniMax API error: ${upstreamError}`);
-  }
-
-  const rewrittenText = extractAssistantText(payload);
-  const raw =
-    typeof rewrittenText === "string"
-      ? sanitizeRewriteOutput(rewrittenText)
-      : "";
-  if (!raw) {
-    if (isReasoningOverflowResponse(payload)) {
-      throw new Error(
-        "MiniMax returned an empty rewrite result (reasoning token overflow)."
-      );
-    }
-    throw new Error("MiniMax returned an empty rewrite result.");
-  }
-  return raw;
-}
-
-async function callMinimaxWithModelFallback(
-  config: LocalAiConfig,
-  text: string,
-  strict: boolean,
-  maxCompletionTokens = REWRITE_MAX_COMPLETION_TOKENS,
-  promptMode: "default" | "final_only" = "default"
-): Promise<{ rewrittenText: string; modelUsed: string }> {
-  const models = [
-    config.model,
-    ...MINIMAX_MODEL_FALLBACK_ORDER.filter((model) => model !== config.model),
-  ];
-
-  let lastModelError: unknown = null;
-  for (const model of models) {
-    try {
-      const rewrittenText = await callMinimaxChat(
-        config,
-        text,
-        strict,
-        model,
-        maxCompletionTokens,
-        promptMode
-      );
-      return { rewrittenText, modelUsed: model };
-    } catch (error) {
-      if (isModelNotSupportedError(error)) {
-        lastModelError = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  if (lastModelError instanceof Error) throw lastModelError;
-  throw new Error("MiniMax request failed on all configured model fallbacks.");
-}
-
-async function minimaxRewrite(
-  config: LocalAiConfig,
-  text: string
-): Promise<{ rewrittenText: string; modelUsed: string }> {
-  const isEmptyRewriteError = (error: unknown): boolean =>
-    error instanceof Error &&
-    error.message.includes("MiniMax returned an empty rewrite result.");
-  const attempt = async (
-    strict: boolean
-  ): Promise<{ rewrittenText: string; modelUsed: string } | null> => {
-    try {
-      return await callMinimaxWithModelFallback(
-        config,
-        text,
-        strict,
-        REWRITE_MAX_COMPLETION_TOKENS,
-        "default"
-      );
-    } catch (error) {
-      if (isEmptyRewriteError(error)) {
-        try {
-          return await callMinimaxWithModelFallback(
-            config,
-            text,
-            true,
-            REWRITE_RETRY_MAX_COMPLETION_TOKENS,
-            "default"
-          );
-        } catch (retryError) {
-          if (isEmptyRewriteError(retryError)) return null;
-          throw retryError;
-        }
-      }
-      throw error;
-    }
-  };
-
-  const firstCandidate = await attempt(false);
-  if (firstCandidate) return firstCandidate;
-
-  const secondCandidate = await attempt(true);
-  if (secondCandidate) return secondCandidate;
-
-  // Final rescue pass with a minimal prompt to force only final answer text.
-  try {
-    const finalOnly = await callMinimaxWithModelFallback(
-      config,
-      text,
-      true,
-      REWRITE_FINAL_MAX_COMPLETION_TOKENS,
-      "final_only"
-    );
-    if (finalOnly) return finalOnly;
-  } catch (error) {
-    if (!isEmptyRewriteError(error)) throw error;
-  }
-
-  throw new Error("MiniMax returned an empty rewrite result.");
-}
-
 function clientRepoPlugin() {
   return {
     name: "invoicer-client-repo-writer",
@@ -775,18 +312,46 @@ function clientRepoPlugin() {
       config: { root: string };
     }) {
       server.middlewares.use("/__invoicer/clients", async (req, res, next) => {
-        if (req.method !== "POST") {
+        if (req.method !== "GET" && req.method !== "POST") {
           next();
           return;
         }
         try {
+          const clientsDir = path.resolve(server.config.root, "src/config/clients");
+
+          if (req.method === "GET") {
+            let files: string[] = [];
+            try {
+              files = await fs.readdir(clientsDir);
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+            }
+            const clients = (
+              await Promise.all(
+                files
+                  .filter((file) => file.endsWith(".json"))
+                  .map(async (file) => {
+                    const raw = await fs.readFile(path.resolve(clientsDir, file), "utf8");
+                    return JSON.parse(raw);
+                  })
+              )
+            ).sort((a, b) => {
+              const aName = typeof a.name === "string" ? a.name : "";
+              const bName = typeof b.name === "string" ? b.name : "";
+              return aName.localeCompare(bName);
+            });
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, clients }));
+            return;
+          }
+
           const body = await readBody(req);
           const parsed = JSON.parse(body) as {
             clients?: Array<Record<string, unknown>>;
           };
           const clients = Array.isArray(parsed.clients) ? parsed.clients : [];
 
-          const clientsDir = path.resolve(server.config.root, "src/config/clients");
           const logosDir = path.resolve(server.config.root, "public/client-logos");
           await fs.mkdir(clientsDir, { recursive: true });
           await fs.mkdir(logosDir, { recursive: true });
@@ -831,7 +396,25 @@ function clientRepoPlugin() {
 
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ ok: true, count: written.size }));
+          const persisted = await Promise.all(
+            Array.from(written)
+              .sort()
+              .map(async (file) => {
+                const raw = await fs.readFile(path.resolve(clientsDir, file), "utf8");
+                return JSON.parse(raw);
+              })
+          );
+          res.end(
+            JSON.stringify({
+              ok: true,
+              clients: persisted.sort((a, b) => {
+                const aName = typeof a.name === "string" ? a.name : "";
+                const bName = typeof b.name === "string" ? b.name : "";
+                return aName.localeCompare(bName);
+              }),
+              count: written.size,
+            })
+          );
         } catch (err) {
           res.statusCode = 500;
           res.setHeader("Content-Type", "application/json");
@@ -1148,122 +731,6 @@ function clientRepoPlugin() {
           }
         }
       );
-
-      server.middlewares.use("/__invoicer/ai-config", async (req, res, next) => {
-        if (req.method !== "GET" && req.method !== "POST") {
-          next();
-          return;
-        }
-
-        try {
-          if (req.method === "GET") {
-            const parsedUrl = new URL(req.url ?? "/", "http://localhost");
-            const includeSecret =
-              parsedUrl.searchParams.get("includeSecret") === "1";
-            const config = await readAiConfig(server.config.root);
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            const publicConfig = toPublicAiConfig(config);
-            const fullConfig = includeSecret
-              ? { ...publicConfig, apiKey: config?.apiKey ?? "" }
-              : publicConfig;
-            res.end(JSON.stringify({ ok: true, config: fullConfig }));
-            return;
-          }
-
-          const body = await readBody(req);
-          const parsed = JSON.parse(body) as Record<string, unknown>;
-          const existing = await readAiConfig(server.config.root);
-          const incomingApiKey =
-            typeof parsed.apiKey === "string" ? parsed.apiKey.trim() : "";
-          const apiKey = incomingApiKey || existing?.apiKey || "";
-          if (!apiKey) {
-            res.statusCode = 400;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok: false, error: "API key is required." }));
-            return;
-          }
-
-          const baseUrl =
-            parsed.baseUrl ?? existing?.baseUrl ?? DEFAULT_AI_BASE_URL;
-          const model = parsed.model ?? existing?.model ?? DEFAULT_AI_MODEL;
-
-          const config: LocalAiConfig = {
-            provider: "minimax",
-            apiKey,
-            baseUrl: normalizeBaseUrl(baseUrl),
-            model: normalizeText(model, DEFAULT_AI_MODEL),
-          };
-          await writeAiConfig(server.config.root, config);
-
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ ok: true, config: toPublicAiConfig(config) }));
-        } catch (err) {
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          res.end(
-            JSON.stringify({
-              ok: false,
-              error: err instanceof Error ? err.message : String(err),
-            })
-          );
-        }
-      });
-
-      server.middlewares.use("/__invoicer/ai-rewrite", async (req, res, next) => {
-        if (req.method !== "POST") {
-          next();
-          return;
-        }
-
-        try {
-          const body = await readBody(req);
-          const parsed = JSON.parse(body) as Record<string, unknown>;
-          const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
-          if (!text) {
-            res.statusCode = 400;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok: false, error: "Text is required for rewrite." }));
-            return;
-          }
-
-          const config = await readAiConfig(server.config.root);
-          if (!config?.apiKey) {
-            res.statusCode = 400;
-            res.setHeader("Content-Type", "application/json");
-            res.end(
-              JSON.stringify({
-                ok: false,
-                error:
-                  "MiniMax API key is missing. Add it first via AI Rewrite settings.",
-              })
-            );
-            return;
-          }
-
-          const { rewrittenText, modelUsed } = await minimaxRewrite(config, text);
-          if (modelUsed !== config.model) {
-            await writeAiConfig(server.config.root, {
-              ...config,
-              model: modelUsed,
-            });
-          }
-
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ ok: true, rewrittenText }));
-        } catch (err) {
-          res.statusCode = 502;
-          res.setHeader("Content-Type", "application/json");
-          res.end(
-            JSON.stringify({
-              ok: false,
-              error: err instanceof Error ? err.message : String(err),
-            })
-          );
-        }
-      });
     },
   };
 }

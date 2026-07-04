@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/__invoicer/clients",
+      "destination": "/api/invoicer/clients"
+    },
+    {
+      "source": "/__invoicer/company-settings",
+      "destination": "/api/invoicer/company-settings"
+    },
+    {
+      "source": "/__invoicer/invoices",
+      "destination": "/api/invoicer/invoices"
+    },
+    {
+      "source": "/__invoicer/invoices/:path*",
+      "destination": "/api/invoicer/invoices/[...]"
+    },
+    {
+      "source": "/toggl-api/:path*",
+      "destination": "/api/toggl/[...]"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ dist-ssr
 .invoicer/
 private-data/
 .claude/
+.vercel
 
 # Editor directories and files
 .vscode/*

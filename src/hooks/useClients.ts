@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { Client } from "../types";
 
 const REPO_CLIENT_MODULES = import.meta.glob("../config/clients/*.json", {
@@ -53,19 +53,53 @@ function loadClientsFromRepo(): Client[] {
   return unique;
 }
 
-async function persistClientsToRepo(clients: Client[]): Promise<void> {
+interface ClientListResponse {
+  ok: boolean;
+  clients?: Client[];
+  error?: string;
+}
+
+async function parseJsonSafe<T>(res: Response): Promise<T | null> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPersistedClients(): Promise<Client[] | null> {
+  try {
+    const res = await fetch("/__invoicer/clients");
+    const payload = await parseJsonSafe<ClientListResponse>(res);
+    if (!res.ok || !payload?.ok || !Array.isArray(payload.clients)) {
+      throw new Error(payload?.error || "Failed to load client configs.");
+    }
+    return payload.clients
+      .map((client) => toClient(client, "/__invoicer/clients"))
+      .filter((client): client is Client => client !== null);
+  } catch (err) {
+    console.error("[clients] failed to load persisted configs:", err);
+    return null;
+  }
+}
+
+async function persistClients(clients: Client[]): Promise<Client[] | null> {
   try {
     const res = await fetch("/__invoicer/clients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clients }),
     });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error("[clients] failed to persist configs:", text);
+    const payload = await parseJsonSafe<ClientListResponse>(res);
+    if (!res.ok || !payload?.ok || !Array.isArray(payload.clients)) {
+      throw new Error(payload?.error || "Failed to persist client configs.");
     }
+    return payload.clients
+      .map((client) => toClient(client, "/__invoicer/clients"))
+      .filter((client): client is Client => client !== null);
   } catch (err) {
     console.error("[clients] failed to persist configs:", err);
+    return null;
   }
 }
 
@@ -89,6 +123,17 @@ function makeUniqueClientId(base: string, existingIds: Set<string>): string {
 export function useClients() {
   const [clients, setClients] = useState<Client[]>(loadClientsFromRepo);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPersistedClients().then((persisted) => {
+      if (cancelled || !persisted) return;
+      setClients(persisted);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const addClient = useCallback((draft: Omit<Client, "id"> & { id?: string }): Client => {
     const baseId = slugifyClientId(draft.id ?? draft.name);
     let created: Client | null = null;
@@ -103,7 +148,9 @@ export function useClients() {
       };
       created = client;
       const next = [...prev, client];
-      void persistClientsToRepo(next);
+      void persistClients(next).then((persisted) => {
+        if (persisted) setClients(persisted);
+      });
       return next;
     });
     return created ?? { ...draft, id: baseId };
@@ -113,7 +160,9 @@ export function useClients() {
     (id: string, partial: Partial<Omit<Client, "id">>) => {
       setClients((prev) => {
         const next = prev.map((c) => (c.id === id ? { ...c, ...partial } : c));
-        void persistClientsToRepo(next);
+        void persistClients(next).then((persisted) => {
+          if (persisted) setClients(persisted);
+        });
         return next;
       });
     },
@@ -123,7 +172,9 @@ export function useClients() {
   const deleteClient = useCallback((id: string) => {
     setClients((prev) => {
       const next = prev.filter((c) => c.id !== id);
-      void persistClientsToRepo(next);
+      void persistClients(next).then((persisted) => {
+        if (persisted) setClients(persisted);
+      });
       return next;
     });
   }, []);

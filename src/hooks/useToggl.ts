@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import type { TogglConfig, TogglClient, TogglTimeEntry, LineItem } from "../types";
 
 const STORAGE_KEY = "invoicer-toggl";
-// Use Vite dev proxy to avoid CORS; in production you'd need your own proxy
+// Vite handles this in local dev; Vercel rewrites it to a Serverless Function.
 const BASE_URL = "/toggl-api/api/v9";
 const TOGGL_TIME_ZONE = "America/Los_Angeles";
 
