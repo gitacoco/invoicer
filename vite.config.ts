@@ -447,6 +447,14 @@ function clientRepoPlugin() {
           const db = await readInvoicesDb(server.config.root);
 
           if (method === "GET") {
+            if (invoiceId === "client" && subAction) {
+              const invoices = invoicesForClientInDisplayOrder(db.invoices, subAction);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true, invoices }));
+              return;
+            }
+
             if (invoiceId) {
               const match = db.invoices.find((inv) => inv.id === invoiceId);
               if (!match) {

@@ -38,6 +38,12 @@ export default async function handler(req, res) {
     const db = await readInvoicesDb();
 
     if (method === "GET") {
+      if (invoiceId === "client" && subAction) {
+        const invoices = invoicesForClientInDisplayOrder(db.invoices, subAction);
+        sendJson(res, 200, { ok: true, invoices });
+        return;
+      }
+
       if (invoiceId) {
         const match = db.invoices.find((invoice) => invoice.id === invoiceId);
         if (!match) {

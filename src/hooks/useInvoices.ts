@@ -45,7 +45,7 @@ export function useInvoices(clientId: string | null) {
     setLoading(true);
     try {
       const res = await fetch(
-        `/__invoicer/invoices?clientId=${encodeURIComponent(clientId)}`
+        `/__invoicer/invoices/client/${encodeURIComponent(clientId)}`
       );
       const payload = await parseJsonSafe<InvoiceListResponse>(res);
       if (!res.ok || !payload?.ok || !Array.isArray(payload.invoices)) {
