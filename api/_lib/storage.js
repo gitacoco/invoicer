@@ -63,7 +63,7 @@ export async function writeJsonStore(key, value) {
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
-    cacheControlMaxAge: 60,
+    cacheControlMaxAge: 0,
   });
 }
 
