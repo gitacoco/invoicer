@@ -64,7 +64,7 @@ export async function readJsonStore(key, fallback) {
   });
   const latest = versions.blobs
     .filter((blob) => blob.pathname.endsWith(".json"))
-    .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())[0];
+    .sort((a, b) => b.pathname.localeCompare(a.pathname))[0];
   if (latest) {
     return await readRemoteJson(latest.pathname);
   }
