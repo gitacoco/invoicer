@@ -26,3 +26,4 @@ private-data/
 *.njsproj
 *.sln
 *.sw?
+.env*
