@@ -1,5 +1,6 @@
 import {
   handleError,
+  queryValue,
   queryPathSegments,
   readJsonBody,
   requestUrl,
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
         return;
       }
 
-      const clientId = url.searchParams.get("clientId");
+      const clientId = queryValue(req.query?.clientId) || url.searchParams.get("clientId");
       const invoices = invoicesForClientInDisplayOrder(db.invoices, clientId);
       sendJson(res, 200, { ok: true, invoices });
       return;

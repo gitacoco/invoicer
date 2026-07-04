@@ -47,9 +47,17 @@ export default async function handler(req, res) {
       return;
     }
 
-    const incomingUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-    incomingUrl.searchParams.delete("path");
-    const upstreamUrl = `${TOGGL_ORIGIN}/${path}${incomingUrl.search}`;
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(req.query ?? {})) {
+      if (key === "path" || key === "...") continue;
+      if (Array.isArray(value)) {
+        for (const item of value) searchParams.append(key, item);
+      } else if (typeof value === "string") {
+        searchParams.append(key, value);
+      }
+    }
+    const search = searchParams.toString();
+    const upstreamUrl = `${TOGGL_ORIGIN}/${path}${search ? `?${search}` : ""}`;
     const upstream = await fetch(upstreamUrl, {
       method: req.method,
       headers: forwardHeaders(req),
