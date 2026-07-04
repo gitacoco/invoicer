@@ -1,0 +1,8 @@
+{
+  "id": "acme-consulting",
+  "name": "Acme Consulting",
+  "address": "500 Market Street\nSan Francisco, CA 94105",
+  "themeColor": "#2563eb",
+  "hourlyRate": 150,
+  "netTerms": 30
+}

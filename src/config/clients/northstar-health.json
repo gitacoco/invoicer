@@ -1,0 +1,8 @@
+{
+  "id": "northstar-health",
+  "name": "Northstar Health",
+  "address": "100 Wellness Avenue\nSeattle, WA 98101",
+  "themeColor": "#0f766e",
+  "hourlyRate": 125,
+  "netTerms": 45
+}

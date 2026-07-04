@@ -65,11 +65,11 @@ interface StoredCompanySettings {
 
 const DEFAULT_COMPANY_SETTINGS: StoredCompanySettings = {
   companyName: "Example Studio LLC",
-  companyAddress: "123 Example Street\nSan Francisco, CA 94105",
+  companyAddress: "123 Example Street\nSuite 100\nSan Francisco, CA 94105",
   contactEmail: "billing@example.com",
   ein: "00-0000000",
   guidanceLanguage:
-    "Use these details to send ACH transfers to Example Studio LLC's checking account.",
+    "Use these placeholder details to send ACH transfers to Example Studio LLC's checking account.",
   routingNumber: "000000000",
   accountNumber: "000000000000",
   receivingBank: "Example Bank",

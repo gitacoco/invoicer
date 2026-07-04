@@ -294,7 +294,6 @@ export default function InvoicePDF({
   const clientLogoUrl = resolveAssetUrl(client.logoDataUrl);
   const companyLogoUrl = resolveAssetUrl(companySettings.companyLogoDataUrl);
   const companyNameLines = companySettings.companyName
-    .replace(/Example Studio(?!\n)/, "Example Studio\n")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);

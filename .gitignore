@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 .invoicer/
+private-data/
+.claude/
 
 # Editor directories and files
 .vscode/*
